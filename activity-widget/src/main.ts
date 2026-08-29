@@ -1,29 +1,25 @@
-import { invoke } from "@tauri-apps/api/core";
+import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
+import { listen } from "@tauri-apps/api/event";
+import { api } from "./api";
+import { ICONS } from "./icons";
+import { refreshTasksPage, setupTasksPage } from "./tasksPage";
+import type { AppCount, Stats, Task, WidgetConfig } from "./types";
+import "./tokens.css";
 import "./styles.css";
 
-const WEEKS = 20;
-const DAYS = WEEKS * 7;
+const $ = (id: string): HTMLElement => document.getElementById(id)!;
 
-interface DayCount {
-  date: string;
-  count: number;
-}
-interface AppCount {
-  app: string;
-  count: number;
-}
-interface Stats {
-  today: number;
-  total: number;
-  streak: number;
-  heatmap: DayCount[];
-  top_apps: AppCount[];
-}
-interface WidgetConfig {
-  mode: "all" | "allowlist";
-  apps: string[];
-  watch_folders: string[] | null;
-}
+const DONE_FLASH_MS = 5000;
+const STATS_POLL_MS = 30_000;
+const CLOCK_POLL_MS = 1000;
+
+/** Island sizes per stage — mirrored in notch_daemon for hit-testing. */
+const ISLAND_PILL: [number, number] = [340, 44];
+const ISLAND_DASHBOARD: [number, number] = [474, 312];
+const ISLAND_SETTINGS: [number, number] = [474, 424];
+const ISLAND_TASKS: [number, number] = [560, 444];
+
+/* ============================ helpers ============================ */
 
 function fmtDate(d: Date): string {
   const y = d.getFullYear();
@@ -32,22 +28,26 @@ function fmtDate(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-function renderDate(): void {
-  const el = document.getElementById("today-date");
-  if (el) {
-    el.textContent = new Date().toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-    });
-  }
+function fmtClock(totalSec: number): string {
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-function buildCells(): { cell: HTMLDivElement; date: string }[] {
-  const grid = document.getElementById("heatmap")!;
-  grid.innerHTML = "";
+/** Local, same-document notification for task mutations. */
+function emitTasksChanged(): void {
+  document.dispatchEvent(new CustomEvent("tasks-changed"));
+}
+
+/* ============================ heatmap ============================ */
+
+const HEATMAP_DAYS = 12 * 7;
+
+const heatCells: { el: HTMLDivElement; date: string }[] = (() => {
+  const grid = $("heatmap");
   const today = new Date();
   const start = new Date(today);
-  start.setDate(start.getDate() - (DAYS - 1));
+  start.setDate(start.getDate() - (HEATMAP_DAYS - 1));
 
   const pad = (start.getDay() + 6) % 7;
   for (let i = 0; i < pad; i++) {
@@ -55,20 +55,18 @@ function buildCells(): { cell: HTMLDivElement; date: string }[] {
     filler.className = "cell filler";
     grid.appendChild(filler);
   }
-  const cells: { cell: HTMLDivElement; date: string }[] = [];
-  for (let i = 0; i < DAYS; i++) {
+  const cells: { el: HTMLDivElement; date: string }[] = [];
+  for (let i = 0; i < HEATMAP_DAYS; i++) {
     const d = new Date(start);
     d.setDate(start.getDate() + i);
-    const cell = document.createElement("div");
-    cell.className = "cell";
-    cell.dataset.level = "0";
-    grid.appendChild(cell);
-    cells.push({ cell, date: fmtDate(d) });
+    const el = document.createElement("div");
+    el.className = "cell";
+    el.dataset.level = "0";
+    grid.appendChild(el);
+    cells.push({ el, date: fmtDate(d) });
   }
   return cells;
-}
-
-const cells = buildCells();
+})();
 
 function levelFor(count: number, max: number): number {
   if (count <= 0) return 0;
@@ -76,109 +74,359 @@ function levelFor(count: number, max: number): number {
   return Math.min(4, Math.ceil((count * 4) / scale));
 }
 
-function renderApps(apps: AppCount[]): void {
-  const list = document.getElementById("apps-list")!;
-  list.innerHTML = "";
-  if (!apps.length) {
-    list.innerHTML = '<span class="empty">No activity tracked yet</span>';
-    return;
-  }
-  const max = Math.max(...apps.map((a) => a.count));
-  for (const a of apps) {
-    const row = document.createElement("div");
-    row.className = "app-row";
-    const name = document.createElement("span");
-    name.className = "app-name";
-    name.textContent = a.app.replace(/\.exe$/i, "");
-    const barWrap = document.createElement("div");
-    barWrap.className = "app-bar";
-    const bar = document.createElement("div");
-    bar.className = "app-bar-fill";
-    bar.style.width = `${Math.max(6, (a.count / max) * 100)}%`;
-    barWrap.appendChild(bar);
-    const count = document.createElement("span");
-    count.className = "app-count";
-    count.textContent = String(a.count);
-    row.append(name, barWrap, count);
-    list.appendChild(row);
-  }
-}
-
-async function refresh(): Promise<void> {
+async function refreshStats(): Promise<void> {
   try {
-    const s = await invoke<Stats>("get_stats");
-    const set = (id: string, v: string) => {
-      const el = document.getElementById(id);
-      if (el) el.textContent = v;
-    };
-    set("stat-today", String(s.today));
-    set("stat-total", String(s.total));
-    set("stat-streak", `${s.streak}d`);
-    set("pill-count", `${s.today} today`);
+    const s: Stats = await api.getStats();
+    $("stat-today").textContent = String(s.today);
+    $("stat-total").textContent = String(s.total);
+    $("stat-streak").textContent = `${s.streak}d`;
+    $("header-streak").innerHTML = `&#x1F525; ${s.streak}d`;
+    $("pill-streak").textContent = String(s.streak);
+    focus.streak = s.streak;
 
     const counts = new Map(s.heatmap.map((d) => [d.date, d.count]));
     const max = Math.max(0, ...s.heatmap.map((d) => d.count));
-    for (const { cell, date } of cells) {
+    for (const { el, date } of heatCells) {
       const count = counts.get(date) ?? 0;
-      cell.dataset.level = String(levelFor(count, max));
+      el.dataset.level = String(levelFor(count, max));
       const d = new Date(`${date}T12:00:00`);
-      cell.title =
-        count > 0
-          ? `${d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} · ${count} event${count === 1 ? "" : "s"}`
-          : `${d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} · no events`;
+      el.title = `${d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} · ${count} event${count === 1 ? "" : "s"}`;
     }
-    renderApps(s.top_apps);
+    renderPill();
   } catch {
-    // backend not ready yet
+    // backend not ready
   }
 }
 
-let expanded = false;
-let collapseTimer: ReturnType<typeof setTimeout> | undefined;
+/* ============================ task preview ============================ */
 
-function applyState(): void {
-  const widget = document.getElementById("widget");
-  if (!widget) return;
-  widget.dataset.state = expanded ? "open" : "closed";
-  if (expanded) void refresh();
-  invoke("set_widget_state", { expanded }).catch(() => {});
+function previewRow(t: Task): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "task-row";
+
+  const circle = document.createElement("button");
+  circle.className = "task-circle";
+  circle.title = "Complete";
+  circle.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    await api.setTaskDone(t.id, true).catch(() => {});
+    emitTasksChanged();
+  });
+
+  const title = document.createElement("span");
+  title.className = "task-title";
+  title.textContent = t.title;
+
+  const play = document.createElement("button");
+  play.className = "task-play";
+  play.title = "Start focus";
+  play.innerHTML = ICONS.play;
+  play.addEventListener("click", (e) => {
+    e.stopPropagation();
+    openFocusPop(t.title, t.duration_min);
+  });
+
+  row.addEventListener("click", () => openTasksPage());
+  row.append(circle, title, play);
+  return row;
 }
 
-function openWidget(): void {
-  if (collapseTimer) {
-    clearTimeout(collapseTimer);
-    collapseTimer = undefined;
+async function refreshTaskPreview(): Promise<void> {
+  try {
+    const tasks = await api.listTasks("open", null);
+    const list = $("task-preview");
+    list.innerHTML = "";
+    $("todo-count").textContent = String(tasks.length);
+    if (!tasks.length) {
+      list.innerHTML = '<span class="empty">No open tasks</span>';
+      return;
+    }
+    for (const t of tasks.slice(0, 6)) list.appendChild(previewRow(t));
+  } catch {
+    // ignore
   }
-  if (!expanded) {
-    expanded = true;
-    applyState();
+}
+
+/* ============================ pill ============================ */
+
+function renderPill(): void {
+  const clockEl = $("pill-clock");
+  const taskEl = $("pill-task");
+  if (focus.session) {
+    const s = focus.session;
+    clockEl.textContent = s.paused
+      ? `II ${fmtClock(s.remainingSec)}`
+      : fmtClock(s.remainingSec);
+    taskEl.textContent = s.done ? "Focus complete" : s.title;
+  } else {
+    clockEl.textContent = new Date().toLocaleTimeString(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+    taskEl.textContent = "";
   }
 }
 
-function scheduleCollapse(): void {
-  if (!expanded) return;
-  if (collapseTimer) clearTimeout(collapseTimer);
-  collapseTimer = setTimeout(() => {
-    expanded = false;
-    collapseTimer = undefined;
-    applyState();
-  }, 600);
+/* ============================ focus sessions ============================ */
+
+interface FocusSession {
+  title: string;
+  totalSec: number;
+  remainingSec: number;
+  /** Wall-clock deadline keeps the countdown accurate despite timer drift. */
+  deadline: number;
+  paused: boolean;
+  done: boolean;
 }
 
-/* ---------------- settings ---------------- */
+const focus = {
+  session: null as FocusSession | null,
+  timer: undefined as ReturnType<typeof setInterval> | undefined,
+  streak: 0,
+  popTask: "",
+  popMin: 25,
+  popSec: 0,
+  /** Pin reflects the focus-duration popover; the daemon keeps the island open. */
+  pin: false,
+};
+
+function setPin(pin: boolean): void {
+  focus.pin = pin;
+  void api.setPin(pin);
+}
+
+function openFocusPop(title: string, defaultMin: number | null): void {
+  focus.popTask = title;
+  focus.popMin = defaultMin && defaultMin > 0 ? defaultMin : 25;
+  focus.popSec = 0;
+  renderStepper();
+  $("pop-task").textContent = title;
+  $("focus-overlay").hidden = false;
+  setPin(true);
+}
+
+function closeFocusPop(): void {
+  if ($("focus-overlay").hidden) return;
+  $("focus-overlay").hidden = true;
+  setPin(false);
+}
+
+function renderStepper(): void {
+  $("min-val").textContent = String(focus.popMin);
+  $("sec-val").textContent = String(focus.popSec).padStart(2, "0");
+}
+
+function startSession(title: string, totalSec: number): void {
+  stopSessionTimer();
+  focus.session = {
+    title,
+    totalSec,
+    remainingSec: totalSec,
+    deadline: Date.now() + totalSec * 1000,
+    paused: false,
+    done: false,
+  };
+  $("island").dataset.focus = "running";
+  $("focus-task").textContent = title;
+  $("focus-bar").hidden = false;
+  $("focus-line").hidden = false;
+  focus.timer = setInterval(tickSession, 500);
+  tickSession();
+}
+
+function tickSession(): void {
+  const s = focus.session;
+  if (!s || s.paused || s.done) return;
+  s.remainingSec = Math.max(0, Math.ceil((s.deadline - Date.now()) / 1000));
+  updateFocusUI();
+  if (s.remainingSec === 0) void completeSession();
+}
+
+async function completeSession(): Promise<void> {
+  const s = focus.session;
+  if (!s) return;
+  s.done = true;
+  stopSessionTimer();
+
+  await api.logEvent("Focus", "focus_session", s.title).catch(() => {});
+  await notifyFocusDone(s.title);
+
+  $("island").dataset.focus = "done";
+  $("focus-bar").hidden = true;
+  $("focus-line").hidden = true;
+  setTimeout(() => {
+    if (focus.session?.done) {
+      focus.session = null;
+      $("island").dataset.focus = "";
+      renderPill();
+    }
+  }, DONE_FLASH_MS);
+  renderPill();
+  await refreshStats();
+}
+
+function stopSession(): void {
+  stopSessionTimer();
+  focus.session = null;
+  $("island").dataset.focus = "";
+  $("focus-bar").hidden = true;
+  $("focus-line").hidden = true;
+  renderPill();
+}
+
+function stopSessionTimer(): void {
+  if (focus.timer) {
+    clearInterval(focus.timer);
+    focus.timer = undefined;
+  }
+}
+
+function updateFocusUI(): void {
+  const s = focus.session;
+  if (!s) return;
+  $("focus-count").textContent = fmtClock(s.remainingSec);
+  const pct = Math.round(((s.totalSec - s.remainingSec) / s.totalSec) * 100);
+  $("focus-line-fill").style.width = `${pct}%`;
+  const pauseIc = $("focus-pause-ic") as HTMLElement;
+  const playIc = $("focus-play-ic") as HTMLElement;
+  pauseIc.style.display = s.paused ? "none" : "block";
+  playIc.style.display = s.paused ? "block" : "none";
+  renderPill();
+}
+
+async function notifyFocusDone(title: string): Promise<void> {
+  try {
+    if (!(await isPermissionGranted())) {
+      const perm = await requestPermission();
+      if (perm !== "granted") return;
+    }
+    sendNotification({ title: "Focus session complete", body: title });
+  } catch {
+    // notifications unavailable — the island flash still signals completion
+  }
+}
+
+function setupFocusUI(): void {
+  const clamp = (v: number, max: number) => Math.max(0, Math.min(max, v));
+  $("min-up").addEventListener("click", () => {
+    focus.popMin = clamp(focus.popMin + 1, 180);
+    renderStepper();
+  });
+  $("min-down").addEventListener("click", () => {
+    focus.popMin = clamp(focus.popMin - 1, 180);
+    renderStepper();
+  });
+  $("sec-up").addEventListener("click", () => {
+    focus.popSec = clamp(focus.popSec + 5, 55);
+    renderStepper();
+  });
+  $("sec-down").addEventListener("click", () => {
+    focus.popSec = clamp(focus.popSec - 5, 55);
+    renderStepper();
+  });
+  $("focus-start").addEventListener("click", () => {
+    const total = focus.popMin * 60 + focus.popSec;
+    closeFocusPop();
+    if (total > 0) startSession(focus.popTask, total);
+  });
+  $("focus-pop-cancel").addEventListener("click", closeFocusPop);
+  $("focus-overlay").addEventListener("click", (e) => {
+    if (e.target === $("focus-overlay")) closeFocusPop();
+  });
+
+  $("focus-toggle").addEventListener("click", () => {
+    const s = focus.session;
+    if (!s || s.done) return;
+    if (s.paused) {
+      s.deadline = Date.now() + s.remainingSec * 1000;
+      s.paused = false;
+    } else {
+      s.paused = true;
+    }
+    updateFocusUI();
+  });
+  $("focus-stop").addEventListener("click", () => stopSession());
+
+  void listen<FocusRequest>("focus-request", ({ payload }) => {
+    openFocusPop(payload.title, payload.minutes);
+  });
+}
+
+interface FocusRequest {
+  title: string;
+  minutes: number | null;
+}
+
+/* ============================ stage (from daemon) ============================ */
+
+function islandSize(): [number, number] {
+  if ($("island").dataset.stage !== "expanded") return ISLAND_PILL;
+  if ($("island").dataset.page === "tasks") return ISLAND_TASKS;
+  return $("settings-view").hidden ? ISLAND_DASHBOARD : ISLAND_SETTINGS;
+}
+
+/** Keeps data-view/data-page metadata and the daemon's island size in sync. */
+function syncIslandSize(): void {
+  const island = $("island");
+  island.dataset.view = $("settings-view").hidden ? "main" : "settings";
+  const [w, h] = islandSize();
+  void api.setIslandSize(w, h);
+}
+
+/** The backend daemon owns the stage; we only render it. */
+function setupStageListener(): void {
+  void listen<{ stage: "compact" | "expanded" | "hidden" }>("notch://stage", ({ payload }) => {
+    $("island").dataset.stage = payload.stage === "expanded" ? "expanded" : "compact";
+    if (payload.stage !== "expanded") {
+      // Leaving the expanded stage resets transient UI.
+      closeFocusPop();
+      closeSettings();
+      closeTasksPage();
+      void refreshStats();
+      void refreshTaskPreview();
+    }
+    syncIslandSize();
+  });
+
+  $("pill").addEventListener("click", () => void api.expandNow());
+  $("collapse-btn").addEventListener("click", () => void api.collapseNow());
+  $("tasks-btn").addEventListener("click", () => openTasksPage());
+}
+
+/* ============================ tasks page ============================ */
+
+function tasksPageOpen(): boolean {
+  return $("island").dataset.page === "tasks";
+}
+
+function openTasksPage(): void {
+  closeSettings();
+  $("island").dataset.page = "tasks";
+  syncIslandSize();
+  void api.setPin(true);
+  refreshTasksPage();
+}
+
+function closeTasksPage(): void {
+  if (!tasksPageOpen()) return;
+  $("island").dataset.page = "dashboard";
+  syncIslandSize();
+  setPin(false);
+}
+
+/* ============================ settings ============================ */
 
 let cfg: WidgetConfig = { mode: "all", apps: [], watch_folders: null };
 
 function renderModeSeg(): void {
   document
     .querySelectorAll<HTMLButtonElement>("#mode-seg .seg-btn")
-    .forEach((b) => {
-      b.classList.toggle("active", b.dataset.mode === cfg.mode);
-    });
+    .forEach((b) => b.classList.toggle("active", b.dataset.mode === cfg.mode));
 }
 
-function renderChips(recent: AppCount[]): void {
-  const wrap = document.getElementById("app-chips")!;
+function renderAppChips(recent: AppCount[]): void {
+  const wrap = $("app-chips");
   wrap.innerHTML = "";
   const names = new Set<string>([
     ...cfg.apps.map((a) => a.toLowerCase()),
@@ -189,11 +437,14 @@ function renderChips(recent: AppCount[]): void {
   const sorted = [...names].sort(
     (a, b) => countOf(b) - countOf(a) || a.localeCompare(b),
   );
+
   for (const n of sorted) {
     const chip = document.createElement("button");
     chip.className = "chip";
-    const enabled = cfg.mode === "all" || cfg.apps.some((a) => a.toLowerCase() === n);
-    chip.classList.toggle("on", enabled);
+    chip.classList.toggle(
+      "on",
+      cfg.mode === "all" || cfg.apps.some((a) => a.toLowerCase() === n),
+    );
     chip.textContent = `${n.replace(/\.exe$/i, "")} · ${countOf(n)}`;
     chip.addEventListener("click", () => {
       if (cfg.mode === "all") {
@@ -204,101 +455,71 @@ function renderChips(recent: AppCount[]): void {
       cfg.apps = has
         ? cfg.apps.filter((a) => a.toLowerCase() !== n)
         : [...cfg.apps, n];
-      renderChips(recent);
+      renderAppChips(recent);
       renderModeSeg();
     });
     wrap.appendChild(chip);
   }
-  if (!sorted.length) {
-    wrap.innerHTML = '<span class="empty">No apps seen yet</span>';
-  }
+  if (!sorted.length) wrap.innerHTML = '<span class="empty">No apps seen yet</span>';
 }
 
 async function openSettings(): Promise<void> {
-  const settings = document.getElementById("settings-view")!;
-  const main = document.getElementById("main-view")!;
-  main.hidden = true;
-  settings.hidden = false;
+  $("main-view").hidden = true;
+  $("settings-view").hidden = false;
+  syncIslandSize();
   try {
-    const [loaded, recent] = await Promise.all([
-      invoke<WidgetConfig>("get_config"),
-      invoke<AppCount[]>("recent_apps"),
-    ]);
+    const [loaded, recent] = await Promise.all([api.getConfig(), api.recentApps()]);
     cfg = {
       mode: loaded.mode === "allowlist" ? "allowlist" : "all",
       apps: loaded.apps ?? [],
       watch_folders: loaded.watch_folders ?? null,
     };
     renderModeSeg();
-    renderChips(recent);
-    const folders = document.getElementById("folders-input") as HTMLInputElement;
-    folders.value = (cfg.watch_folders ?? []).join("; ");
+    renderAppChips(recent);
+    ($("folders-input") as HTMLInputElement).value = (cfg.watch_folders ?? []).join("; ");
   } catch {
     // ignore
   }
 }
 
 function closeSettings(): void {
-  document.getElementById("settings-view")!.hidden = true;
-  document.getElementById("main-view")!.hidden = false;
+  if ($("settings-view").hidden) return;
+  $("settings-view").hidden = true;
+  $("main-view").hidden = false;
+  syncIslandSize();
 }
 
 async function saveSettings(): Promise<void> {
-  const foldersRaw = (document.getElementById("folders-input") as HTMLInputElement)
-    .value.trim();
+  const foldersRaw = ($("folders-input") as HTMLInputElement).value.trim();
   const watch_folders = foldersRaw
-    ? foldersRaw
-        .split(/[;\n]/)
-        .map((s) => s.trim())
-        .filter(Boolean)
+    ? foldersRaw.split(/[;\n]/).map((s) => s.trim()).filter(Boolean)
     : null;
-  await invoke("save_config", {
-    args: {
+  await api
+    .saveConfig({
       mode: cfg.mode,
       apps: cfg.apps.map((a) => (a.includes(".") ? a : `${a}.exe`)),
       watch_folders,
-    },
-  });
-  const hint = document.getElementById("save-hint")!;
-  hint.hidden = false;
-  setTimeout(() => (hint.hidden = true), 3000);
+    })
+    .catch(() => {});
+  $("save-hint").hidden = false;
+  setTimeout(() => ($("save-hint").hidden = true), 3000);
 }
 
-function setupUI(): void {
-  const widget = document.getElementById("widget")!;
-
-  document.getElementById("pill")?.addEventListener("mouseenter", openWidget);
-
-  widget.addEventListener("mouseenter", () => {
-    if (collapseTimer) {
-      clearTimeout(collapseTimer);
-      collapseTimer = undefined;
-    }
-  });
-  widget.addEventListener("mouseleave", scheduleCollapse);
-
-  document.getElementById("collapse-btn")?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    expanded = false;
-    applyState();
-  });
-  document.getElementById("settings-btn")?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    const hidden = document.getElementById("settings-view")!.hidden;
+function setupSettings(): void {
+  $("settings-btn").addEventListener("click", () => {
+    const hidden = $("settings-view").hidden;
     if (hidden) void openSettings();
     else closeSettings();
   });
-  document
-    .querySelectorAll<HTMLButtonElement>("#mode-seg .seg-btn")
-    .forEach((b) =>
-      b.addEventListener("click", () => {
-        cfg.mode = (b.dataset.mode as WidgetConfig["mode"]) ?? "all";
-        if (cfg.mode === "all") cfg.apps = [];
-        void openSettings();
-      }),
-    );
-  document.getElementById("app-add")?.addEventListener("click", () => {
-    const input = document.getElementById("app-input") as HTMLInputElement;
+  document.querySelectorAll<HTMLButtonElement>("#mode-seg .seg-btn").forEach((b) =>
+    b.addEventListener("click", () => {
+      cfg.mode = (b.dataset.mode as WidgetConfig["mode"]) ?? "all";
+      if (cfg.mode === "all") cfg.apps = [];
+      void openSettings();
+    }),
+  );
+  $("app-add").addEventListener("click", () => {
+    const input = $("app-input") as HTMLInputElement;
     const v = input.value.trim().toLowerCase();
     if (!v) return;
     if (!cfg.apps.some((a) => a.toLowerCase() === v)) {
@@ -308,19 +529,44 @@ function setupUI(): void {
     input.value = "";
     void openSettings();
   });
-  document.getElementById("save-btn")?.addEventListener("click", () => {
-    void saveSettings();
-  });
-
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && expanded) {
-      expanded = false;
-      applyState();
-    }
-  });
+  $("save-btn").addEventListener("click", () => void saveSettings());
 }
 
-renderDate();
-setupUI();
-void refresh();
-setInterval(() => void refresh(), 30_000);
+/* ============================ boot ============================ */
+
+function main(): void {
+  $("today-date").textContent = new Date().toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+
+  setupStageListener();
+  setupFocusUI();
+  setupSettings();
+  setupTasksPage({
+    onChanged: () => void refreshTaskPreview(),
+    onClose: () => closeTasksPage(),
+  });
+  syncIslandSize();
+
+  document.addEventListener("tasks-changed", () => void refreshTaskPreview());
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (!$("focus-overlay").hidden) {
+      closeFocusPop();
+    } else if (tasksPageOpen()) {
+      closeTasksPage();
+    } else {
+      void api.collapseNow();
+    }
+  });
+
+  void refreshStats();
+  void refreshTaskPreview();
+  renderPill();
+  setInterval(renderPill, CLOCK_POLL_MS);
+  setInterval(() => void refreshStats(), STATS_POLL_MS);
+}
+
+main();

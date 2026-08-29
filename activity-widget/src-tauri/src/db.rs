@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     title        TEXT NOT NULL,
     notes        TEXT,
+    due_date     TEXT,
     duration_min INTEGER,
     done         INTEGER NOT NULL DEFAULT 0,
     created_ts   INTEGER NOT NULL,
@@ -29,7 +30,19 @@ CREATE TABLE IF NOT EXISTS tasks (
 pub fn init(db_path: &Path) -> Result<Connection, rusqlite::Error> {
     let conn = Connection::open(db_path)?;
     conn.execute_batch(SCHEMA)?;
+    migrate(&conn)?;
     Ok(conn)
+}
+
+/// Idempotent migrations for databases created by older versions.
+fn migrate(conn: &Connection) -> Result<(), rusqlite::Error> {
+    let has_due_date: bool = conn
+        .prepare("SELECT 1 FROM pragma_table_info('tasks') WHERE name = 'due_date'")?
+        .exists([])?;
+    if !has_due_date {
+        conn.execute_batch("ALTER TABLE tasks ADD COLUMN due_date TEXT;")?;
+    }
+    Ok(())
 }
 
 pub fn insert(
@@ -48,17 +61,6 @@ pub fn insert(
 
 pub fn count_all(conn: &Connection) -> Result<i64, rusqlite::Error> {
     conn.query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0))
-}
-
-pub fn delete_by_app_and_type(
-    conn: &Connection,
-    app_name: &str,
-    event_type: &str,
-) -> Result<usize, rusqlite::Error> {
-    conn.execute(
-        "DELETE FROM events WHERE app_name = ?1 AND event_type = ?2",
-        rusqlite::params![app_name, event_type],
-    )
 }
 
 #[derive(serde::Serialize)]
@@ -176,6 +178,7 @@ pub struct Task {
     pub id: i64,
     pub title: String,
     pub notes: Option<String>,
+    pub due_date: Option<String>,
     pub duration_min: Option<i64>,
     pub done: bool,
     pub created_ts: i64,
@@ -185,17 +188,19 @@ pub fn add_task(
     conn: &Connection,
     title: &str,
     notes: Option<&str>,
+    due_date: Option<&str>,
     duration_min: Option<i64>,
     ts: i64,
 ) -> Result<Task, rusqlite::Error> {
     conn.execute(
-        "INSERT INTO tasks (title, notes, duration_min, created_ts) VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![title, notes, duration_min, ts],
+        "INSERT INTO tasks (title, notes, due_date, duration_min, created_ts) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![title, notes, due_date, duration_min, ts],
     )?;
     Ok(Task {
         id: conn.last_insert_rowid(),
         title: title.to_string(),
         notes: notes.map(|s| s.to_string()),
+        due_date: due_date.map(|s| s.to_string()),
         duration_min,
         done: false,
         created_ts: ts,
@@ -207,20 +212,56 @@ fn row_to_task(row: &rusqlite::Row) -> Result<Task, rusqlite::Error> {
         id: row.get(0)?,
         title: row.get(1)?,
         notes: row.get(2)?,
-        duration_min: row.get(3)?,
-        done: row.get::<_, i64>(4)? != 0,
-        created_ts: row.get(5)?,
+        due_date: row.get(3)?,
+        duration_min: row.get(4)?,
+        done: row.get::<_, i64>(5)? != 0,
+        created_ts: row.get(6)?,
     })
 }
 
-pub fn list_tasks(conn: &Connection) -> Result<Vec<Task>, rusqlite::Error> {
-    let mut stmt = conn.prepare(
-        "SELECT id, title, notes, duration_min, done, created_ts FROM tasks ORDER BY done ASC, (CASE WHEN done = 1 THEN done_ts ELSE created_ts END) DESC LIMIT 60",
-    )?;
-    let tasks = stmt
-        .query_map([], |row| row_to_task(row))?
-        .collect::<Result<Vec<Task>, _>>()?;
-    Ok(tasks)
+fn collect_tasks<P: rusqlite::Params>(
+    stmt: &mut rusqlite::Statement<'_>,
+    params: P,
+) -> Result<Vec<Task>, rusqlite::Error> {
+    let rows = stmt.query_map(params, |row| row_to_task(row))?;
+    rows.collect()
+}
+
+/// Listing filters used by the UI.
+/// - `day`         open tasks scheduled for `day`
+/// - `unscheduled` open tasks without a due date
+/// - `open`        every open task (dashboard preview)
+/// - `recent`      recently completed, newest first
+pub fn list_tasks(
+    conn: &Connection,
+    filter: &str,
+    day: Option<&str>,
+) -> Result<Vec<Task>, rusqlite::Error> {
+    let mut stmt;
+    match (filter, day) {
+        ("day", Some(d)) => {
+            stmt = conn.prepare(
+                "SELECT id, title, notes, due_date, duration_min, done, created_ts FROM tasks WHERE done = 0 AND due_date = ?1 ORDER BY created_ts DESC LIMIT 100",
+            )?;
+            return collect_tasks(&mut stmt, [d]);
+        }
+        ("unscheduled", _) => {
+            stmt = conn.prepare(
+                "SELECT id, title, notes, due_date, duration_min, done, created_ts FROM tasks WHERE done = 0 AND due_date IS NULL ORDER BY created_ts DESC LIMIT 100",
+            )?;
+        }
+        ("recent", _) => {
+            stmt = conn.prepare(
+                "SELECT id, title, notes, due_date, duration_min, done, created_ts FROM tasks WHERE done = 1 ORDER BY done_ts DESC LIMIT 20",
+            )?;
+        }
+        _ => {
+            stmt = conn.prepare(
+                "SELECT id, title, notes, due_date, duration_min, done, created_ts FROM tasks WHERE done = 0 ORDER BY (due_date IS NULL), due_date ASC, created_ts DESC LIMIT 100",
+            )?;
+        }
+    }
+    collect_tasks(&mut stmt, [])
 }
 
 pub fn set_task_done(conn: &Connection, id: i64, done: bool, ts: i64) -> Result<usize, rusqlite::Error> {
@@ -230,14 +271,23 @@ pub fn set_task_done(conn: &Connection, id: i64, done: bool, ts: i64) -> Result<
     )
 }
 
+pub fn set_task_duration(
+    conn: &Connection,
+    id: i64,
+    duration_min: Option<i64>,
+) -> Result<usize, rusqlite::Error> {
+    conn.execute(
+        "UPDATE tasks SET duration_min = ?2 WHERE id = ?1",
+        rusqlite::params![id, duration_min],
+    )
+}
+
 pub fn delete_task(conn: &Connection, id: i64) -> Result<usize, rusqlite::Error> {
     conn.execute("DELETE FROM tasks WHERE id = ?1", rusqlite::params![id])
 }
 
 fn chrono_next_minus(date: &str) -> String {
-    // date is YYYY-MM-DD; subtract one day via string math through chrono-free parse.
-    use std::time::SystemTime;
-    let _ = SystemTime::now();
+    // `date` is YYYY-MM-DD; returns the previous day without pulling in chrono.
     let parts: Vec<i64> = date.split('-').filter_map(|p| p.parse().ok()).collect();
     if parts.len() != 3 {
         return String::new();

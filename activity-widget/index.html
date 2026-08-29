@@ -2,109 +2,175 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="stylesheet" href="/src/styles.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Activity Widget</title>
     <script type="module" src="/src/main.ts" defer></script>
   </head>
 
   <body>
-    <main class="widget" id="widget" data-state="closed">
-      <button class="pill" id="pill" data-tauri-drag-region>
-        <svg class="pill-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" data-tauri-drag-region>
-          <circle cx="12" cy="12" r="9"/>
-          <path d="M12 7v5l3 2"/>
-        </svg>
-        <span class="pill-clock" id="pill-clock" data-tauri-drag-region>--:--</span>
-        <span class="pill-task" id="pill-task" data-tauri-drag-region></span>
-        <span class="pill-streak" data-tauri-drag-region>&#x1F525;<b id="pill-streak">0</b></span>
-      </button>
+    <main class="canvas" id="canvas">
+      <div class="island" id="island" data-stage="compact" data-page="dashboard" data-view="main" data-focus="">
+        <div class="focus-line" id="focus-line" hidden>
+          <div class="focus-line-fill" id="focus-line-fill"></div>
+        </div>
 
-      <div class="panel">
-        <header class="widget-header" data-tauri-drag-region>
-          <span class="dot active" data-tauri-drag-region></span>
-          <span class="title" data-tauri-drag-region>Activity</span>
-          <span class="header-chip" data-tauri-drag-region id="header-streak">&#x1F525; 0d</span>
-          <span class="date" id="today-date" data-tauri-drag-region></span>
-          <button class="icon-btn" id="settings-btn" title="Settings">
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="3"/>
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-            </svg>
-          </button>
-          <button class="icon-btn" id="collapse-btn" title="Collapse">
-            <svg width="10" height="10" viewBox="0 0 10 10">
-              <path d="M2 6.5 L5 3.5 L8 6.5" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </button>
-        </header>
+        <button class="pill-face" id="pill" title="Expand">
+          <svg class="pill-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="9"/>
+            <path d="M12 7v5l3 2"/>
+          </svg>
+          <span class="pill-clock" id="pill-clock">--:--</span>
+          <span class="pill-task" id="pill-task"></span>
+          <span class="pill-streak">&#x1F525;<b id="pill-streak">0</b></span>
+        </button>
 
-        <div class="view" id="main-view">
-          <div class="cols">
-            <section class="card todo-card">
-              <div class="card-head">
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-                  <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
-                </svg>
-                <span class="card-label">To do</span>
-              </div>
-              <div class="task-list" id="task-list"></div>
-              <div class="task-add">
-                <input type="text" id="task-title" placeholder="Add a task" autocomplete="off" />
-                <div class="task-add-ext" id="task-add-ext" hidden>
-                  <input type="text" id="task-notes" placeholder="Notes (optional)" autocomplete="off" />
-                  <div class="task-add-actions">
-                    <button class="mini-btn primary" id="task-save">Add</button>
-                    <button class="mini-btn" id="task-cancel">Cancel</button>
-                  </div>
+        <div class="page page-dashboard">
+          <header class="widget-header">
+            <span class="dot"></span>
+            <span class="title">Activity</span>
+            <span class="header-chip" id="header-streak">&#x1F525; 0d</span>
+            <span class="date" id="today-date"></span>
+            <button class="icon-btn" id="tasks-btn" title="Tasks">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+              </svg>
+            </button>
+            <button class="icon-btn" id="settings-btn" title="Settings">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+              </svg>
+            </button>
+            <button class="icon-btn" id="collapse-btn" title="Collapse">
+              <svg width="10" height="10" viewBox="0 0 10 10">
+                <path d="M2 6.5 L5 3.5 L8 6.5" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          </header>
+
+          <div class="view" id="main-view">
+            <div class="cols">
+              <section class="card todo-card">
+                <div class="card-head">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                    <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+                  </svg>
+                  <span class="card-label">To do</span>
+                  <span class="card-value" id="todo-count">0</span>
                 </div>
+                <div class="task-list" id="task-preview"></div>
+              </section>
+
+              <section class="card streak-card">
+                <div class="card-head">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>
+                  </svg>
+                  <span class="card-label">Journey Streak</span>
+                  <span class="card-value" id="stat-streak">0d</span>
+                </div>
+                <div class="heatmap" id="heatmap"></div>
+                <div class="mini-stats">
+                  <span>Today <b id="stat-today">0</b></span>
+                  <span>Total <b id="stat-total">0</b></span>
+                </div>
+              </section>
+            </div>
+          </div>
+
+          <div class="view" id="settings-view" hidden>
+            <section class="card">
+              <span class="card-label">Tracking mode</span>
+              <div class="segmented" id="mode-seg">
+                <button class="seg-btn" data-mode="all">Track all apps</button>
+                <button class="seg-btn" data-mode="allowlist">Only chosen apps</button>
               </div>
             </section>
 
-            <section class="card streak-card">
-              <div class="card-head">
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>
-                </svg>
-                <span class="card-label">Journey Streak</span>
-                <span class="card-value" id="stat-streak">0d</span>
-              </div>
-              <div class="heatmap" id="heatmap"></div>
-              <div class="mini-stats">
-                <span>Today <b id="stat-today">0</b></span>
-                <span>Total <b id="stat-total">0</b></span>
+            <section class="card">
+              <span class="card-label">Apps seen this week</span>
+              <div class="chips" id="app-chips"></div>
+              <div class="add-row">
+                <input type="text" id="app-input" placeholder="Add app by name (e.g. chrome.exe)" autocomplete="off" />
+                <button class="mini-btn" id="app-add">Add</button>
               </div>
             </section>
+
+            <section class="card">
+              <span class="card-label">Watched folders (blank = auto)</span>
+              <div class="add-row">
+                <input type="text" id="folders-input" placeholder="C:\path1; C:\path2" autocomplete="off" />
+              </div>
+            </section>
+
+            <button class="primary-btn" id="save-btn">Save settings</button>
+            <div class="save-hint" id="save-hint" hidden>Saved — tracker applies it in ~1.5s</div>
+          </div>
+
+          <div class="focus-bar" id="focus-bar" hidden>
+            <button class="icon-btn tiny" id="focus-toggle" title="Pause">
+              <svg id="focus-pause-ic" width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+              <svg id="focus-play-ic" width="9" height="9" viewBox="0 0 24 24" fill="currentColor" style="display:none"><path d="M7 4l14 8-14 8z"/></svg>
+            </button>
+            <span class="focus-time" id="focus-count">25:00</span>
+            <span class="focus-task" id="focus-task"></span>
+            <button class="icon-btn tiny" id="focus-stop" title="Stop">
+              <svg width="9" height="9" viewBox="0 0 10 10"><path d="M2.5 2.5 L7.5 7.5 M7.5 2.5 L2.5 7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </button>
           </div>
         </div>
 
-        <div class="view" id="settings-view" hidden>
-          <section class="card">
-            <span class="card-label">Tracking mode</span>
-            <div class="segmented" id="mode-seg">
-              <button class="seg-btn" data-mode="all">Track all apps</button>
-              <button class="seg-btn" data-mode="allowlist">Only chosen apps</button>
-            </div>
-          </section>
+        <div class="page page-tasks">
+          <header class="tpage-header">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+            </svg>
+            <span class="tpage-title">Tasks</span>
+            <span class="header-chip" id="t-open-count">0 open</span>
+            <button class="icon-btn" id="t-close" title="Back">
+              <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2.5 2.5 L7.5 7.5 M7.5 2.5 L2.5 7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </button>
+          </header>
 
-          <section class="card">
-            <span class="card-label">Apps seen this week</span>
-            <div class="chips" id="app-chips"></div>
-            <div class="add-row">
-              <input type="text" id="app-input" placeholder="Add app by name (e.g. chrome.exe)" autocomplete="off" />
-              <button class="mini-btn" id="app-add">Add</button>
-            </div>
-          </section>
+          <div class="tpage-body">
+            <aside class="card tcal">
+              <div class="cal-nav">
+                <button class="icon-btn" id="cal-prev" title="Previous month">
+                  <svg width="9" height="9" viewBox="0 0 10 10"><path d="M6.5 2 L3.5 5 L6.5 8" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+                <span class="cal-title" id="cal-title"></span>
+                <button class="icon-btn" id="cal-next" title="Next month">
+                  <svg width="9" height="9" viewBox="0 0 10 10"><path d="M3.5 2 L6.5 5 L3.5 8" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+              </div>
+              <div class="cal-grid cal-weekdays">
+                <span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span>
+              </div>
+              <div class="cal-grid cal-days" id="cal-days"></div>
+              <button class="cal-today-btn" id="cal-today">Today</button>
+            </aside>
 
-          <section class="card">
-            <span class="card-label">Watched folders (blank = auto)</span>
-            <div class="add-row">
-              <input type="text" id="folders-input" placeholder="C:\path1; C:\path2" autocomplete="off" />
-            </div>
-          </section>
-
-          <button class="primary-btn" id="save-btn">Save settings</button>
-          <div class="save-hint" id="save-hint" hidden>Saved — tracker applies it in ~1.5s</div>
+            <section class="tlist-pane">
+              <div class="tlist-head">
+                <span class="tlist-title" id="t-list-title">Today</span>
+                <div class="segmented" id="t-mode">
+                  <button class="seg-btn active" data-mode="day">Day</button>
+                  <button class="seg-btn" data-mode="unscheduled">Unscheduled</button>
+                </div>
+              </div>
+              <div class="tlist" id="t-list"></div>
+              <div class="tadd">
+                <div class="tadd-row">
+                  <input type="text" id="t-title" placeholder="Add a task" autocomplete="off" />
+                  <button class="mini-btn primary" id="t-add">Add</button>
+                </div>
+                <div class="tadd-row" id="t-notes-row" hidden>
+                  <input type="text" id="t-notes" placeholder="Notes (optional)" autocomplete="off" />
+                  <button class="mini-btn" id="t-cancel">Cancel</button>
+                </div>
+              </div>
+            </section>
+          </div>
         </div>
 
         <div class="focus-overlay" id="focus-overlay" hidden>
@@ -140,19 +206,6 @@
             </div>
           </div>
         </div>
-
-        <div class="focus-bar" id="focus-bar" hidden>
-          <button class="icon-btn tiny" id="focus-toggle" title="Pause">
-            <svg id="focus-pause-ic" width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
-            <svg id="focus-play-ic" width="9" height="9" viewBox="0 0 24 24" fill="currentColor" style="display:none"><path d="M7 4l14 8-14 8z"/></svg>
-          </button>
-          <span class="focus-time" id="focus-count">25:00</span>
-          <span class="focus-task" id="focus-task"></span>
-          <button class="icon-btn tiny" id="focus-stop" title="Stop">
-            <svg width="9" height="9" viewBox="0 0 10 10"><path d="M2.5 2.5 L7.5 7.5 M7.5 2.5 L2.5 7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-          </button>
-        </div>
-        <div class="focus-line" id="focus-line" hidden><div class="focus-line-fill" id="focus-line-fill"></div></div>
       </div>
     </main>
   </body>

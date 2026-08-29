@@ -15,14 +15,14 @@
       {
         "label": "main",
         "title": "Activity Widget",
-        "width": 320,
-        "height": 48,
+        "url": "index.html",
+        "width": 560,
+        "height": 448,
         "resizable": false,
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": false,
         "skipTaskbar": true,
-        "focus": false,
         "shadow": false,
         "visible": false
       }

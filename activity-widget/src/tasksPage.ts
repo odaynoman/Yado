@@ -1,15 +1,19 @@
-import { api } from "./api";
 import { ICONS } from "./icons";
-import type { Task, TaskFilter } from "./types";
+import {
+  deleteTask,
+  getTasks,
+  refreshTasks,
+  setTaskDone,
+  subscribeTasks,
+  updateTask,
+} from "./tasksStore";
+import type { Task } from "./types";
+import "./tokens.css";
+import "./styles.css";
 
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
 
-/** Duration presets cycled by clicking a task's duration chip (minutes). */
-const DURATION_PRESETS: (number | null)[] = [null, 5, 15, 25, 45];
-
 export interface TasksPageHooks {
-  /** Called after any task mutation so the dashboard preview refreshes. */
-  onChanged: () => void;
   /** Called when the user closes the page. */
   onClose: () => void;
 }
@@ -40,11 +44,6 @@ function fmtDuration(min: number | null): string {
 function fmtDayLabel(date: string): string {
   const d = new Date(`${date}T12:00:00`);
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
-/** Local, same-document notification for task mutations. */
-function emitChanged(): void {
-  document.dispatchEvent(new CustomEvent("tasks-changed"));
 }
 
 /* ============================ calendar ============================ */
@@ -81,7 +80,7 @@ function renderCalendar(): void {
       state.selectedDay = date;
       state.viewMonth = new Date(d.getFullYear(), d.getMonth(), 1);
       renderCalendar();
-      void refreshList();
+      renderList();
     });
     grid.appendChild(cell);
   }
@@ -100,7 +99,7 @@ function setupCalendar(): void {
     state.viewMonth = new Date();
     state.selectedDay = todayStr();
     renderCalendar();
-    void refreshList();
+    renderList();
   });
 }
 
@@ -113,10 +112,7 @@ function taskRow(t: Task): HTMLElement {
   const circle = document.createElement("button");
   circle.className = "task-circle";
   circle.title = "Complete";
-  circle.addEventListener("click", () => {
-    void api.setTaskDone(t.id, true).catch(() => {});
-    emitChanged();
-  });
+  circle.addEventListener("click", () => void setTaskDone(t.id, true));
 
   const body = document.createElement("div");
   body.className = "task-body";
@@ -137,14 +133,14 @@ function taskRow(t: Task): HTMLElement {
 
   const durationChip = document.createElement("button");
   durationChip.className = "chip";
-  durationChip.title = "Click to change estimate";
+  durationChip.title = "Click to set any duration";
   durationChip.textContent = fmtDuration(t.duration_min);
   durationChip.addEventListener("click", () => {
-    const idx = DURATION_PRESETS.indexOf(t.duration_min);
-    const next = DURATION_PRESETS[(idx + 1) % DURATION_PRESETS.length];
-    t.duration_min = next;
-    durationChip.textContent = fmtDuration(next);
-    void api.setTaskDuration(t.id, next).catch(() => {});
+    document.dispatchEvent(
+      new CustomEvent("duration-request", {
+        detail: { id: t.id, title: t.title, minutes: t.duration_min },
+      }),
+    );
   });
 
   const play = document.createElement("button");
@@ -153,53 +149,134 @@ function taskRow(t: Task): HTMLElement {
   play.innerHTML = ICONS.play;
   play.addEventListener("click", () => {
     document.dispatchEvent(
-      new CustomEvent<FocusRequestLike>("focus-request", {
+      new CustomEvent("focus-request", {
         detail: { title: t.title, minutes: t.duration_min },
       }),
     );
   });
 
+  const edit = document.createElement("button");
+  edit.className = "task-del";
+  edit.title = "Edit";
+  edit.innerHTML = ICONS.edit;
+  edit.addEventListener("click", () => renderEdit(row, t));
+
   const del = document.createElement("button");
   del.className = "task-del";
   del.title = "Delete";
   del.innerHTML = ICONS.trash;
-  del.addEventListener("click", () => {
-    void api.deleteTask(t.id).catch(() => {});
-    emitChanged();
-  });
+  del.addEventListener("click", () => void deleteTask(t.id));
 
-  row.append(circle, body, dueChip, durationChip, del, play);
+  row.append(circle, body, dueChip, durationChip, edit, del, play);
   return row;
 }
 
-export interface FocusRequestLike {
-  title: string;
-  minutes: number | null;
+function doneRow(t: Task): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "trow done";
+
+  const circle = document.createElement("button");
+  circle.className = "task-circle filled";
+  circle.title = "Reopen";
+  circle.addEventListener("click", () => void setTaskDone(t.id, false));
+
+  const body = document.createElement("div");
+  body.className = "task-body";
+  const title = document.createElement("span");
+  title.className = "task-title";
+  title.textContent = t.title;
+  body.appendChild(title);
+
+  const del = document.createElement("button");
+  del.className = "task-del";
+  del.title = "Delete";
+  del.innerHTML = ICONS.trash;
+  del.addEventListener("click", () => void deleteTask(t.id));
+
+  row.append(circle, body, del);
+  return row;
 }
 
-async function refreshList(): Promise<void> {
-  const filter: TaskFilter = state.mode === "day" ? "day" : "unscheduled";
-  try {
-    const [tasks, open] = await Promise.all([
-      api.listTasks(filter, state.selectedDay),
-      api.listTasks("open", null),
-    ]);
-    $("t-open-count").textContent = `${open.length} open`;
-    $("t-list-title").textContent =
-      state.mode === "day" ? fmtDayLabel(state.selectedDay) : "Unscheduled";
+/** Re-renders the list purely from the store — no fetching here. */
+function renderList(): void {
+  const all = getTasks();
+  const visible =
+    state.mode === "day"
+      ? all.filter((t) => !t.done && t.due_date === state.selectedDay)
+      : all.filter((t) => !t.done && t.due_date === null);
+  const done = all.filter((t) => t.done);
 
-    const list = $("t-list");
-    list.innerHTML = "";
-    if (!tasks.length) {
-      list.innerHTML = `<span class="empty">${
-        state.mode === "day" ? "Nothing scheduled this day" : "Nothing unscheduled"
-      }</span>`;
-      return;
-    }
-    for (const t of tasks) list.appendChild(taskRow(t));
-  } catch {
-    // ignore
+  $("t-open-count").textContent = `${all.filter((t) => !t.done).length} open`;
+  $("t-list-title").textContent =
+    state.mode === "day" ? fmtDayLabel(state.selectedDay) : "Unscheduled";
+
+  const list = $("t-list");
+  list.innerHTML = "";
+  if (!visible.length && !done.length) {
+    list.innerHTML = `<span class="empty">${
+      state.mode === "day" ? "Nothing scheduled this day" : "Nothing unscheduled"
+    }</span>`;
+    return;
   }
+  for (const t of visible) list.appendChild(taskRow(t));
+
+  if (done.length) {
+    const header = document.createElement("span");
+    header.className = "done-header";
+    header.textContent = "Done";
+    list.appendChild(header);
+    for (const t of done) list.appendChild(doneRow(t));
+  }
+}
+
+function renderEdit(row: HTMLElement, t: Task): void {
+  row.classList.add("editing");
+  row.innerHTML = "";
+
+  const fields = document.createElement("div");
+  fields.className = "edit-fields";
+
+  const titleInput = document.createElement("input");
+  titleInput.value = t.title;
+  titleInput.placeholder = "Task title";
+
+  const notesInput = document.createElement("input");
+  notesInput.value = t.notes ?? "";
+  notesInput.placeholder = "Notes (optional)";
+
+  const actions = document.createElement("div");
+  actions.className = "edit-actions";
+
+  const save = document.createElement("button");
+  save.className = "mini-btn primary";
+  save.textContent = "Save";
+
+  const cancel = document.createElement("button");
+  cancel.className = "mini-btn";
+  cancel.textContent = "Cancel";
+
+  const submit = (): void => {
+    const title = titleInput.value.trim();
+    if (!title) return;
+    void updateTask(t.id, title, notesInput.value.trim() || null);
+  };
+
+  save.addEventListener("click", submit);
+  cancel.addEventListener("click", () => renderList());
+  titleInput.addEventListener("keydown", (e) => e.key === "Enter" && submit());
+  notesInput.addEventListener("keydown", (e) => e.key === "Enter" && submit());
+  titleInput.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      renderList();
+    }
+  });
+
+  actions.append(save, cancel);
+  fields.append(titleInput, notesInput, actions);
+  row.append(fields);
+  titleInput.focus();
+  titleInput.select();
 }
 
 /* ============================ add form ============================ */
@@ -223,18 +300,15 @@ function setupAddForm(): void {
   const submit = (): void => {
     const t = title.value.trim();
     if (!t) return;
-    void api
-      .addTask({
+    void import("./tasksStore").then(({ addTask }) =>
+      addTask({
         title: t,
         notes: notes.value.trim() || null,
         due_date: state.mode === "day" ? state.selectedDay : null,
         duration_min: null,
-      })
-      .then(() => {
-        resetAddForm();
-        emitChanged();
-      })
-      .catch(() => {});
+      }),
+    );
+    resetAddForm();
   };
   title.addEventListener("keydown", (e) => e.key === "Enter" && submit());
   notes.addEventListener("keydown", (e) => e.key === "Enter" && submit());
@@ -244,15 +318,26 @@ function setupAddForm(): void {
 
 /* ============================ setup ============================ */
 
+export function focusAddInput(): void {
+  ($("t-title") as HTMLInputElement).focus();
+}
+
 export function refreshTasksPage(): void {
-  void refreshList();
+  void refreshTasks();
 }
 
 export function setupTasksPage(hooks: TasksPageHooks): void {
   setupCalendar();
   setupAddForm();
 
-  $("t-close").addEventListener("click", hooks.onClose);
+  $("t-close").addEventListener("click", () => hooks.onClose());
+  $("t-focus").addEventListener("click", () => {
+    document.dispatchEvent(
+      new CustomEvent("focus-request", {
+        detail: { title: "Focus session", minutes: 25 },
+      }),
+    );
+  });
 
   document.querySelectorAll<HTMLButtonElement>("#t-mode .seg-btn").forEach((b) =>
     b.addEventListener("click", () => {
@@ -262,12 +347,18 @@ export function setupTasksPage(hooks: TasksPageHooks): void {
       document
         .querySelectorAll<HTMLButtonElement>("#t-mode .seg-btn")
         .forEach((x) => x.classList.toggle("active", x === b));
-      void refreshList();
+      renderList();
     }),
   );
 
-  document.addEventListener("tasks-changed", () => void refreshList());
+  // The store is the single source of truth: re-render on any change,
+  // wherever it came from (this page, the dashboard preview, ...).
+  subscribeTasks(renderList);
 
   renderCalendar();
-  void refreshList();
+  renderList();
+}
+
+export interface TasksPageHooks {
+  onClose: () => void;
 }

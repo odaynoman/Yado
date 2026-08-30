@@ -9,7 +9,7 @@ use tauri::{LogicalSize, PhysicalPosition, WebviewWindow};
 
 /// Main window: a static transparent canvas covering the maximum
 /// expansion area of the island (the tasks page is the largest stage).
-pub const CANVAS_SIZE: (f64, f64) = (560.0, 448.0);
+pub const CANVAS_SIZE: (f64, f64) = (600.0, 464.0);
 /// Compact island (the notch pill) rendered inside the canvas.
 pub const PILL_SIZE: (f64, f64) = (340.0, 44.0);
 /// Dashboard island (default expanded stage).

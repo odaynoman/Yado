@@ -1,7 +1,10 @@
-/* Main window: a fixed transparent canvas; the island morphs inside it
-   (pill -> dashboard -> tasks) with spring motion. Stage transitions are
-   driven by the backend daemon (notch://stage) — no window resizes at
-   runtime. Island sizes per stage are mirrored in notch_daemon/win. */
+/* ============================================================================
+   Main window design system.
+   - Fixed transparent canvas; the island morphs inside it (pill/dashboard/
+     tasks/settings) with spring motion. The backend daemon owns stages.
+   - Heatmap cells are sized by aspect-ratio (width-derived), so the grid
+     can never collapse regardless of parent flex heights.
+   ========================================================================== */
 
 :root {
   /* Expand uses a spring with slight overshoot; collapse eases in. */
@@ -40,10 +43,9 @@
 }
 
 .island[data-stage="expanded"] {
-  width: 474px;
-  height: 312px;
+  width: 600px;
+  height: 340px;
   border-radius: 0 0 22px 22px;
-  /* Expand: spring with overshoot (destination state owns the transition). */
   transition:
     width 280ms var(--spring),
     height 280ms var(--spring),
@@ -52,14 +54,10 @@
     box-shadow 250ms ease;
 }
 
-/* Settings grows the dashboard to full canvas height; tasks widens it. */
-.island[data-stage="expanded"][data-view="settings"] {
-  height: 424px;
-}
-
-.island[data-stage="expanded"][data-page="tasks"] {
-  width: 560px;
-  height: 444px;
+.island[data-stage="expanded"][data-page="tasks"],
+.island[data-stage="expanded"][data-page="settings"] {
+  width: 600px;
+  height: 460px;
 }
 
 .island[data-focus="running"] {
@@ -72,36 +70,7 @@
   box-shadow: inset 0 0 0 1px rgba(52, 211, 153, 0.3);
 }
 
-/* ================= pages ================= */
-
-.page {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  padding: 0 9px 9px;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(-10px);
-  transition:
-    opacity 140ms var(--ease-out),
-    transform 140ms var(--ease-out);
-}
-
-.island[data-stage="expanded"] .page {
-  /* Content settles slightly after the island starts growing. */
-  transition-delay: 70ms;
-  transition-duration: 220ms, 220ms;
-}
-
-.island[data-stage="expanded"][data-page="dashboard"] .page-dashboard,
-.island[data-stage="expanded"][data-page="tasks"] .page-tasks {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateY(0);
-}
-
-/* ================= pill face ================= */
+/* ================= pill face (compact only) ================= */
 
 .pill-face {
   position: absolute;
@@ -114,12 +83,10 @@
   gap: 7px;
   padding: 0 14px;
   color: var(--text);
-  transition: opacity 120ms var(--ease-out);
 }
 
 .island[data-stage="expanded"] .pill-face {
-  opacity: 0;
-  pointer-events: none;
+  display: none;
 }
 
 .pill-icon {
@@ -161,13 +128,42 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* ================= dashboard header / views ================= */
+/* ================= pages ================= */
+
+.page {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 10px 10px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-10px);
+  transition:
+    opacity 140ms var(--ease-out),
+    transform 140ms var(--ease-out);
+}
+
+.island[data-stage="expanded"] .page {
+  transition-delay: 70ms;
+  transition-duration: 220ms, 220ms;
+}
+
+.island[data-stage="expanded"][data-page="dashboard"] .page-dashboard,
+.island[data-stage="expanded"][data-page="tasks"] .page-tasks,
+.island[data-stage="expanded"][data-page="settings"] .page-settings {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+/* ================= shared header ================= */
 
 .widget-header {
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 9px 3px 8px;
+  padding: 10px 4px 8px;
   flex-shrink: 0;
 }
 
@@ -183,7 +179,6 @@
 .title {
   font-size: 12.5px;
   font-weight: 700;
-  letter-spacing: 0.01em;
 }
 
 .header-chip {
@@ -202,44 +197,27 @@
   color: var(--text-dim);
 }
 
-.icon-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--card);
-  color: var(--text-dim);
-  flex-shrink: 0;
-  transition: background 0.12s ease, color 0.12s ease;
-}
-
-.icon-btn:hover {
-  background: var(--card-2);
-  color: var(--text);
-}
-
+/* .icon-btn lives in tokens.css; only the tiny variant here. */
 .icon-btn.tiny {
   width: 18px;
   height: 18px;
   border-radius: 6px;
 }
 
+/* ================= dashboard ================= */
+
 .view {
+  flex: 1 1 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  min-height: 0;
-  flex: 1;
 }
 
 .cols {
-  display: flex;
-  gap: 7px;
+  flex: 1 1 0;
   min-height: 0;
-  flex: 1;
+  display: flex;
+  gap: 8px;
 }
 
 .card-head {
@@ -261,23 +239,24 @@
   margin-left: auto;
   font-size: 10px;
   font-weight: 600;
-  color: var(--text);
   font-variant-numeric: tabular-nums;
 }
 
-/* ================= to-do preview ================= */
+/* ---- to-do card ---- */
 
 .todo-card {
-  flex: 1.1;
+  flex: 1.08 1 0;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .task-list {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  overflow-y: auto;
-  min-height: 0;
-  flex: 1;
   padding-right: 2px;
 }
 
@@ -297,20 +276,6 @@
   border-color: var(--border);
 }
 
-.task-circle {
-  width: 13px;
-  height: 13px;
-  border: 1.5px solid var(--text-dim);
-  border-radius: 50%;
-  flex-shrink: 0;
-  padding: 0;
-  transition: border-color 0.12s ease, background 0.12s ease;
-}
-
-.task-circle:hover {
-  border-color: var(--green);
-}
-
 .task-title {
   font-size: 11px;
   font-weight: 600;
@@ -321,82 +286,29 @@
   min-width: 0;
 }
 
-.task-notes {
-  font-size: 9.5px;
-  color: var(--text-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.task-play {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: var(--accent);
-  color: #fff;
-  flex-shrink: 0;
-  padding: 0;
-  transition: transform 0.12s ease, background 0.12s ease;
-}
-
-.task-play:hover {
-  background: #2e6bf0;
-  transform: scale(1.08);
-}
-
-.task-del {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 6px;
-  color: var(--text-dim);
-  flex-shrink: 0;
-  padding: 0;
-  opacity: 0;
-  transition: opacity 0.12s ease, color 0.12s ease;
-}
-
-.task-row:hover .task-del,
-.trow .task-del {
-  opacity: 0.55;
-}
-
-.task-row:hover .task-del,
-.trow:hover .task-del {
-  opacity: 1;
-}
-
-.task-del:hover {
-  color: var(--danger);
-}
-
-/* ================= streak / heatmap ================= */
+/* ---- streak card ---- */
 
 .streak-card {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
 }
 
+/* 12 weeks x 7 days. Cells are square via aspect-ratio: their size comes
+   from the card width, so the grid height is intrinsic and can never
+   collapse regardless of surrounding flex heights. */
 .heatmap {
   display: grid;
-  grid-auto-flow: column;
-  grid-template-rows: repeat(7, 9px);
-  grid-auto-columns: 9px;
-  gap: 3px;
-  justify-content: center;
-  align-content: center;
-  flex: 1;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 5px;
+  width: 100%;
+  margin: auto 0;
 }
 
 .heatmap .cell {
-  width: 9px;
-  height: 9px;
-  border-radius: 2.5px;
+  aspect-ratio: 1 / 1;
+  width: 100%;
+  border-radius: 4px;
   background: rgba(255, 255, 255, 0.05);
 }
 
@@ -409,16 +321,18 @@
 .heatmap .cell[data-level="3"] { background: rgba(59, 123, 255, 0.8); }
 .heatmap .cell[data-level="4"] {
   background: var(--accent);
-  box-shadow: 0 0 5px rgba(59, 123, 255, 0.55);
+  box-shadow: 0 0 5px rgba(59, 123, 255, 0.5);
 }
 
 .mini-stats {
   display: flex;
   justify-content: center;
-  gap: 12px;
+  gap: 14px;
   font-size: 9.5px;
   color: var(--text-dim);
   flex-shrink: 0;
+  margin-top: auto;
+  padding-top: 6px;
 }
 
 .mini-stats b {
@@ -426,112 +340,170 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* ================= settings ================= */
+/* ---- dashboard quick add ---- */
 
-#settings-view {
-  overflow-y: auto;
-  padding-right: 2px;
-}
-
-.segmented {
-  display: flex;
-  gap: 4px;
-}
-
-.seg-btn {
-  padding: 4px 10px;
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--text-dim);
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  transition: background 0.12s ease, color 0.12s ease;
-}
-
-.seg-btn:hover {
-  background: var(--card-2);
-}
-
-.seg-btn.active {
-  background: var(--accent);
-  border-color: transparent;
-  color: #fff;
-}
-
-#mode-seg .seg-btn {
-  flex: 1;
-  border-radius: 8px;
-  padding: 6px 4px;
-  font-size: 10.5px;
-  background: transparent;
-}
-
-#mode-seg .seg-btn:hover {
-  background: var(--card-2);
-}
-
-#mode-seg .seg-btn.active {
-  background: var(--accent-soft);
-  border-color: rgba(59, 123, 255, 0.5);
-  color: var(--text);
-}
-
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 6px;
-  max-height: 92px;
-  overflow-y: auto;
-}
-
-.chip {
-  font-size: 10px;
-  padding: 4px 8px;
-  color: var(--text-dim);
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid var(--border);
-  border-radius: 999px;
+.todo-add {
   flex-shrink: 0;
-  transition: background 0.12s ease, color 0.12s ease;
 }
 
-button.chip:hover {
-  background: var(--card-2);
-  color: var(--text);
-}
+/* ================= focus bar (dashboard bottom) ================= */
 
-.chip.on {
-  color: var(--text);
-  background: var(--accent-soft);
-  border-color: rgba(59, 123, 255, 0.5);
-}
-
-.add-row {
+.focus-bar {
   display: flex;
-  gap: 5px;
-  margin-top: 7px;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-top: 8px;
+  padding: 7px 10px;
+  background: var(--card);
+  border: 1px solid rgba(59, 123, 255, 0.35);
+  border-radius: 11px;
 }
 
-.primary-btn {
-  font-size: 11.5px;
+.focus-bar[hidden] {
+  display: none;
+}
+
+.focus-time {
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+
+.focus-task {
+  flex: 1;
+  font-size: 10.5px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.focus-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.05);
+  z-index: 5;
+}
+
+.focus-line-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, rgba(59, 123, 255, 0.7), var(--accent));
+  transition: width 1s linear;
+}
+
+/* ================= media bar (dashboard bottom strip) ================= */
+
+.media-bar {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 46px;
+  flex-shrink: 0;
+  margin: 8px -10px -10px;
+  padding: 0 12px;
+  border-top: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.media-bar[hidden] {
+  display: none;
+}
+
+.media-art {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: var(--card-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  font-size: 13px;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.media-art.has-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.media-title {
+  font-size: 11px;
   font-weight: 600;
-  color: #fff;
-  background: var(--accent);
-  border-radius: 9px;
-  padding: 8px;
-  transition: background 0.12s ease;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+  max-width: 140px;
+  flex-shrink: 1;
 }
 
-.primary-btn:hover {
-  background: #2e6bf0;
-}
-
-.save-hint {
+.media-artist {
   font-size: 10px;
-  color: var(--green);
-  text-align: center;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1 1 0;
+  min-width: 40px;
+}
+
+.media-time {
+  font-size: 8.5px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.media-bar input[type="range"] {
+  flex: 1 1 0;
+  min-width: 50px;
+  height: 3px;
+  appearance: none;
+  -webkit-appearance: none;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 2px;
+  outline: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.media-bar input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.media-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.12s ease, transform 0.12s ease;
+}
+
+.media-toggle:hover {
+  background: #2e6bf0;
+  transform: scale(1.06);
 }
 
 /* ================= tasks page ================= */
@@ -540,7 +512,7 @@ button.chip:hover {
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 9px 3px 8px;
+  padding: 10px 4px 8px;
   color: var(--text-dim);
   flex-shrink: 0;
 }
@@ -554,7 +526,7 @@ button.chip:hover {
 .tpage-body {
   display: flex;
   gap: 8px;
-  flex: 1;
+  flex: 1 1 0;
   min-height: 0;
 }
 
@@ -589,7 +561,9 @@ button.chip:hover {
 }
 
 .cal-days {
-  flex: 1;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
   align-content: start;
 }
 
@@ -654,7 +628,7 @@ button.chip:hover {
 }
 
 .tlist-pane {
-  flex: 1;
+  flex: 1 1 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -679,7 +653,7 @@ button.chip:hover {
   gap: 5px;
   overflow-y: auto;
   min-height: 0;
-  flex: 1;
+  flex: 1 1 0;
   padding-right: 3px;
 }
 
@@ -709,6 +683,103 @@ button.chip:hover {
   height: 26px;
 }
 
+.task-circle {
+  width: 13px;
+  height: 13px;
+  border: 1.5px solid var(--text-dim);
+  border-radius: 50%;
+  flex-shrink: 0;
+  padding: 0;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.task-circle:hover {
+  border-color: var(--green);
+}
+
+.task-circle.filled {
+  background: var(--green);
+  border-color: var(--green);
+}
+
+.task-play {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  flex-shrink: 0;
+  padding: 0;
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+
+.task-play:hover {
+  background: #2e6bf0;
+  transform: scale(1.08);
+}
+
+.task-del {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+  padding: 0;
+  opacity: 0.45;
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+
+.task-row:hover .task-del,
+.trow:hover .task-del {
+  opacity: 1;
+}
+
+.task-del:hover {
+  color: var(--danger);
+}
+
+.task-notes {
+  font-size: 9.5px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.task-body {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.done-header {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-dim);
+  padding: 6px 2px 0;
+  flex-shrink: 0;
+}
+
+.trow.done {
+  opacity: 0.55;
+}
+
+.trow.done .task-title {
+  text-decoration: line-through;
+}
+
+/* tasks add form */
+
 .tadd {
   display: flex;
   flex-direction: column;
@@ -726,7 +797,310 @@ button.chip:hover {
   padding: 9px 11px;
 }
 
-/* ================= focus overlay / popover ================= */
+/* task row edit mode */
+
+.trow.editing {
+  flex-wrap: wrap;
+}
+
+.trow .edit-fields {
+  flex: 1 1 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.trow .edit-fields input {
+  font-size: 11.5px;
+  padding: 6px 9px;
+}
+
+.trow .edit-actions {
+  display: flex;
+  gap: 5px;
+  justify-content: flex-end;
+}
+
+/* ================= settings page ================= */
+
+.settings-body {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 2px 3px;
+}
+
+.settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.group-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.group-hint {
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.settings-group .segmented {
+  width: 100%;
+}
+
+.settings-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 8px;
+  flex-shrink: 0;
+}
+
+.settings-footer .save-hint {
+  margin-right: auto;
+}
+
+/* usage statistics */
+
+.usage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.usage-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 11px;
+}
+
+.usage-ico {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: var(--card-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  font-size: 10px;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.usage-ico img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.usage-name {
+  width: 110px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+
+.usage-bar {
+  flex: 1 1 0;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.usage-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, rgba(59, 123, 255, 0.65), var(--accent));
+}
+
+.usage-count {
+  width: 36px;
+  text-align: right;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.usage-share {
+  width: 38px;
+  text-align: right;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+/* tracking app list */
+
+.app-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 168px;
+  overflow-y: auto;
+  padding-right: 3px;
+}
+
+.app-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 7px;
+  border-radius: 8px;
+  background: var(--card);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.app-item:hover {
+  background: var(--card-2);
+}
+
+.app-item-name {
+  flex: 1 1 0;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+
+.app-item-count {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.switch {
+  width: 30px;
+  height: 17px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  position: relative;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease;
+}
+
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.15s var(--ease-out);
+}
+
+.switch.on {
+  background: var(--accent);
+}
+
+.switch.on::after {
+  transform: translateX(13px);
+}
+
+/* segmented controls */
+
+.segmented {
+  display: flex;
+  gap: 4px;
+}
+
+.seg-btn {
+  padding: 4px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-dim);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.seg-btn:hover {
+  background: var(--card-2);
+}
+
+.seg-btn.active {
+  background: var(--accent);
+  border-color: transparent;
+  color: #fff;
+}
+
+#mode-seg .seg-btn {
+  flex: 1;
+  border-radius: 8px;
+  padding: 6px 4px;
+  font-size: 10.5px;
+  background: transparent;
+}
+
+#mode-seg .seg-btn:hover {
+  background: var(--card-2);
+}
+
+#mode-seg .seg-btn.active {
+  background: var(--accent-soft);
+  border-color: rgba(59, 123, 255, 0.5);
+  color: var(--text);
+}
+
+.add-row {
+  display: flex;
+  gap: 5px;
+}
+
+.settings-page-add-row {
+  margin-top: 0;
+}
+
+.primary-btn {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border-radius: 9px;
+  padding: 8px;
+  transition: background 0.12s ease;
+}
+
+.primary-btn:hover {
+  background: #2e6bf0;
+}
+
+.save-hint {
+  font-size: 10px;
+  color: var(--green);
+  text-align: center;
+}
+
+/* ================= focus duration popover ================= */
 
 .focus-overlay {
   position: absolute;
@@ -823,58 +1197,6 @@ button.chip:hover {
 .pop-actions {
   display: flex;
   gap: 6px;
-}
-
-/* ================= focus bar / progress ================= */
-
-.focus-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-  margin-top: auto;
-  padding-top: 6px;
-}
-
-.focus-time {
-  font-size: 12px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  color: var(--accent);
-}
-
-.focus-task {
-  flex: 1;
-  font-size: 10.5px;
-  color: var(--text-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.focus-line {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 2px;
-  background: rgba(255, 255, 255, 0.05);
-  z-index: 5;
-}
-
-.focus-line-fill {
-  height: 100%;
-  width: 0%;
-  background: linear-gradient(90deg, rgba(59, 123, 255, 0.7), var(--accent));
-  transition: width 1s linear;
-}
-
-/* ================= misc ================= */
-
-.empty {
-  font-size: 10.5px;
-  color: var(--text-dim);
-  padding: 4px 2px;
 }
 
 /* ================= reduced motion ================= */

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -92,6 +92,7 @@ pub mod foreground {
 
     pub struct ForegroundInfo {
         pub exe_name: String,
+        pub exe_path: String,
         pub window_title: String,
     }
 
@@ -137,6 +138,7 @@ pub mod foreground {
             }
             Some(ForegroundInfo {
                 exe_name,
+                exe_path,
                 window_title,
             })
         }
@@ -178,6 +180,10 @@ pub fn spawn_focus_tracker(data_dir: PathBuf) {
             if info.exe_name.starts_with(OWN_PROCESS) {
                 continue;
             }
+            crate::app_icons::ensure_cached(
+                &info.exe_name,
+                Path::new(&info.exe_path),
+            );
             let mut last = state.last_app.lock().unwrap();
             if last.as_deref() == Some(info.exe_name.as_str()) {
                 continue;

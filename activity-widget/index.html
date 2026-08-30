@@ -9,7 +9,7 @@
 
   <body>
     <main class="canvas" id="canvas">
-      <div class="island" id="island" data-stage="compact" data-page="dashboard" data-view="main" data-focus="">
+      <div class="island" id="island" data-stage="compact" data-page="dashboard" data-focus="">
         <div class="focus-line" id="focus-line" hidden>
           <div class="focus-line-fill" id="focus-line-fill"></div>
         </div>
@@ -59,6 +59,10 @@
                   <span class="card-value" id="todo-count">0</span>
                 </div>
                 <div class="task-list" id="task-preview"></div>
+                <div class="add-row todo-add">
+                  <input type="text" id="todo-add-input" placeholder="Add a task" autocomplete="off" />
+                  <button class="mini-btn primary" id="todo-add-btn">Add</button>
+                </div>
               </section>
 
               <section class="card streak-card">
@@ -78,35 +82,6 @@
             </div>
           </div>
 
-          <div class="view" id="settings-view" hidden>
-            <section class="card">
-              <span class="card-label">Tracking mode</span>
-              <div class="segmented" id="mode-seg">
-                <button class="seg-btn" data-mode="all">Track all apps</button>
-                <button class="seg-btn" data-mode="allowlist">Only chosen apps</button>
-              </div>
-            </section>
-
-            <section class="card">
-              <span class="card-label">Apps seen this week</span>
-              <div class="chips" id="app-chips"></div>
-              <div class="add-row">
-                <input type="text" id="app-input" placeholder="Add app by name (e.g. chrome.exe)" autocomplete="off" />
-                <button class="mini-btn" id="app-add">Add</button>
-              </div>
-            </section>
-
-            <section class="card">
-              <span class="card-label">Watched folders (blank = auto)</span>
-              <div class="add-row">
-                <input type="text" id="folders-input" placeholder="C:\path1; C:\path2" autocomplete="off" />
-              </div>
-            </section>
-
-            <button class="primary-btn" id="save-btn">Save settings</button>
-            <div class="save-hint" id="save-hint" hidden>Saved — tracker applies it in ~1.5s</div>
-          </div>
-
           <div class="focus-bar" id="focus-bar" hidden>
             <button class="icon-btn tiny" id="focus-toggle" title="Pause">
               <svg id="focus-pause-ic" width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
@@ -118,6 +93,22 @@
               <svg width="9" height="9" viewBox="0 0 10 10"><path d="M2.5 2.5 L7.5 7.5 M7.5 2.5 L2.5 7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
             </button>
           </div>
+
+          <div class="media-bar" id="media-card" hidden>
+            <div class="media-art" id="media-art">&#x266B;</div>
+            <span class="media-title" id="media-title"></span>
+            <span class="media-artist" id="media-artist"></span>
+            <span class="media-time" id="media-pos">0:00</span>
+            <input type="range" id="media-seek" min="0" max="0" value="0" step="1" />
+            <span class="media-time" id="media-dur">0:00</span>
+            <button class="icon-btn tiny" id="media-prev" title="Previous">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+            </button>
+            <button class="media-toggle" id="media-toggle" title="Play / pause"></button>
+            <button class="icon-btn tiny" id="media-next" title="Next">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg>
+            </button>
+          </div>
         </div>
 
         <div class="page page-tasks">
@@ -127,6 +118,9 @@
             </svg>
             <span class="tpage-title">Tasks</span>
             <span class="header-chip" id="t-open-count">0 open</span>
+            <button class="icon-btn" id="t-focus" title="Start a focus session">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4l14 8-14 8z"/></svg>
+            </button>
             <button class="icon-btn" id="t-close" title="Back">
               <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2.5 2.5 L7.5 7.5 M7.5 2.5 L2.5 7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
             </button>
@@ -171,6 +165,55 @@
               </div>
             </section>
           </div>
+        </div>
+
+        <div class="page page-settings">
+          <header class="tpage-header">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+            <span class="tpage-title">Settings</span>
+            <button class="icon-btn" id="settings-close" title="Back" style="margin-left:auto">
+              <svg width="10" height="10" viewBox="0 0 10 10"><path d="M2.5 2.5 L7.5 7.5 M7.5 2.5 L2.5 7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </button>
+          </header>
+
+          <div class="settings-body">
+            <section class="settings-group">
+              <span class="group-title">Usage · last 7 days</span>
+              <div class="usage-list" id="usage-list"></div>
+            </section>
+
+            <section class="settings-group">
+              <span class="group-title">Tracking</span>
+              <div class="segmented" id="mode-seg">
+                <button class="seg-btn" data-mode="all">Track all apps</button>
+                <button class="seg-btn" data-mode="allowlist">Only chosen apps</button>
+              </div>
+              <div class="app-list" id="app-list"></div>
+              <div class="add-row">
+                <input type="text" id="app-input" placeholder="Add app by name (e.g. chrome.exe)" autocomplete="off" />
+                <button class="mini-btn" id="app-add">Add</button>
+              </div>
+            </section>
+
+            <section class="settings-group">
+              <span class="group-title">File watching</span>
+              <p class="group-hint">
+                File changes in these folders count as save events. Leave empty to watch
+                your standard folders (Desktop, Documents, Downloads, Pictures, Videos).
+              </p>
+              <div class="add-row">
+                <input type="text" id="folders-input" placeholder="C:\projects\app; D:\notes" autocomplete="off" />
+              </div>
+            </section>
+          </div>
+
+          <footer class="settings-footer">
+            <span class="save-hint" id="save-hint" hidden>Saved — tracker applies it in ~1.5s</span>
+            <button class="primary-btn" id="save-btn">Save</button>
+          </footer>
         </div>
 
         <div class="focus-overlay" id="focus-overlay" hidden>

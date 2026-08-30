@@ -1,8 +1,17 @@
-import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "./api";
 import { ICONS } from "./icons";
-import { refreshTasksPage, setupTasksPage } from "./tasksPage";
+import { setMediaSuppressed, setupMedia } from "./mediaCard";
+import { applyAppIcon } from "./appIcon";
+import { setupTasksPage } from "./tasksPage";
+import {
+  addTask as storeAddTask,
+  getTasks,
+  refreshTasks as storeRefreshTasks,
+  setTaskDone as storeSetTaskDone,
+  setTaskDuration as storeSetTaskDuration,
+  subscribeTasks,
+} from "./tasksStore";
 import type { AppCount, Stats, Task, WidgetConfig } from "./types";
 import "./tokens.css";
 import "./styles.css";
@@ -15,9 +24,8 @@ const CLOCK_POLL_MS = 1000;
 
 /** Island sizes per stage — mirrored in notch_daemon for hit-testing. */
 const ISLAND_PILL: [number, number] = [340, 44];
-const ISLAND_DASHBOARD: [number, number] = [474, 312];
-const ISLAND_SETTINGS: [number, number] = [474, 424];
-const ISLAND_TASKS: [number, number] = [560, 444];
+const ISLAND_DASHBOARD: [number, number] = [600, 340];
+const ISLAND_PAGE: [number, number] = [600, 460];
 
 /* ============================ helpers ============================ */
 
@@ -34,36 +42,30 @@ function fmtClock(totalSec: number): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-/** Local, same-document notification for task mutations. */
-function emitTasksChanged(): void {
-  document.dispatchEvent(new CustomEvent("tasks-changed"));
-}
+/* ============================ heatmap (current month) ============================ */
 
-/* ============================ heatmap ============================ */
-
-const HEATMAP_DAYS = 12 * 7;
-
+/** Month-calendar heat cells: Mon–Sun columns, one calendar month. */
 const heatCells: { el: HTMLDivElement; date: string }[] = (() => {
   const grid = $("heatmap");
-  const today = new Date();
-  const start = new Date(today);
-  start.setDate(start.getDate() - (HEATMAP_DAYS - 1));
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const pad = (new Date(year, month, 1).getDay() + 6) % 7;
 
-  const pad = (start.getDay() + 6) % 7;
   for (let i = 0; i < pad; i++) {
     const filler = document.createElement("div");
     filler.className = "cell filler";
     grid.appendChild(filler);
   }
   const cells: { el: HTMLDivElement; date: string }[] = [];
-  for (let i = 0; i < HEATMAP_DAYS; i++) {
-    const d = new Date(start);
-    d.setDate(start.getDate() + i);
+  for (let d = 1; d <= daysInMonth; d++) {
+    const date = new Date(year, month, d);
     const el = document.createElement("div");
     el.className = "cell";
     el.dataset.level = "0";
     grid.appendChild(el);
-    cells.push({ el, date: fmtDate(d) });
+    cells.push({ el, date: fmtDate(date) });
   }
   return cells;
 })();
@@ -90,7 +92,7 @@ async function refreshStats(): Promise<void> {
       const count = counts.get(date) ?? 0;
       el.dataset.level = String(levelFor(count, max));
       const d = new Date(`${date}T12:00:00`);
-      el.title = `${d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} · ${count} event${count === 1 ? "" : "s"}`;
+       el.title = `${d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} · ${count} event${count === 1 ? "" : "s"}`;
     }
     renderPill();
   } catch {
@@ -109,8 +111,7 @@ function previewRow(t: Task): HTMLElement {
   circle.title = "Complete";
   circle.addEventListener("click", async (e) => {
     e.stopPropagation();
-    await api.setTaskDone(t.id, true).catch(() => {});
-    emitTasksChanged();
+    await storeSetTaskDone(t.id, true);
   });
 
   const title = document.createElement("span");
@@ -131,20 +132,17 @@ function previewRow(t: Task): HTMLElement {
   return row;
 }
 
-async function refreshTaskPreview(): Promise<void> {
-  try {
-    const tasks = await api.listTasks("open", null);
-    const list = $("task-preview");
-    list.innerHTML = "";
-    $("todo-count").textContent = String(tasks.length);
-    if (!tasks.length) {
-      list.innerHTML = '<span class="empty">No open tasks</span>';
-      return;
-    }
-    for (const t of tasks.slice(0, 6)) list.appendChild(previewRow(t));
-  } catch {
-    // ignore
+/** Renders the preview purely from the store — no fetching here. */
+function renderTaskPreview(): void {
+  const tasks = getTasks().filter((t) => !t.done);
+  const list = $("task-preview");
+  list.innerHTML = "";
+  $("todo-count").textContent = String(tasks.length);
+  if (!tasks.length) {
+    list.innerHTML = '<span class="empty">No open tasks</span>';
+    return;
   }
+  for (const t of tasks.slice(0, 6)) list.appendChild(previewRow(t));
 }
 
 /* ============================ pill ============================ */
@@ -152,6 +150,7 @@ async function refreshTaskPreview(): Promise<void> {
 function renderPill(): void {
   const clockEl = $("pill-clock");
   const taskEl = $("pill-task");
+
   if (focus.session) {
     const s = focus.session;
     clockEl.textContent = s.paused
@@ -180,6 +179,11 @@ interface FocusSession {
   done: boolean;
 }
 
+interface FocusRequest {
+  title: string;
+  minutes: number | null;
+}
+
 const focus = {
   session: null as FocusSession | null,
   timer: undefined as ReturnType<typeof setInterval> | undefined,
@@ -187,6 +191,9 @@ const focus = {
   popTask: "",
   popMin: 25,
   popSec: 0,
+  /** "start" runs a session on apply; "estimate" saves it on the task. */
+  popMode: "start" as "start" | "estimate",
+  estimateId: 0,
   /** Pin reflects the focus-duration popover; the daemon keeps the island open. */
   pin: false,
 };
@@ -196,12 +203,20 @@ function setPin(pin: boolean): void {
   void api.setPin(pin);
 }
 
-function openFocusPop(title: string, defaultMin: number | null): void {
+function openFocusPop(
+  title: string,
+  defaultMin: number | null,
+  mode: "start" | "estimate" = "start",
+  estimateId = 0,
+): void {
   focus.popTask = title;
   focus.popMin = defaultMin && defaultMin > 0 ? defaultMin : 25;
   focus.popSec = 0;
+  focus.popMode = mode;
+  focus.estimateId = estimateId;
   renderStepper();
   $("pop-task").textContent = title;
+  $("focus-start").textContent = mode === "estimate" ? "Apply" : "Start";
   $("focus-overlay").hidden = false;
   setPin(true);
 }
@@ -231,6 +246,8 @@ function startSession(title: string, totalSec: number): void {
   $("focus-task").textContent = title;
   $("focus-bar").hidden = false;
   $("focus-line").hidden = false;
+  setMediaSuppressed(true);
+  syncIslandSize();
   focus.timer = setInterval(tickSession, 500);
   tickSession();
 }
@@ -250,11 +267,13 @@ async function completeSession(): Promise<void> {
   stopSessionTimer();
 
   await api.logEvent("Focus", "focus_session", s.title).catch(() => {});
-  await notifyFocusDone(s.title);
+  await api.notifyFocusDone(s.title).catch(() => {});
 
   $("island").dataset.focus = "done";
   $("focus-bar").hidden = true;
   $("focus-line").hidden = true;
+  setMediaSuppressed(false);
+  syncIslandSize();
   setTimeout(() => {
     if (focus.session?.done) {
       focus.session = null;
@@ -272,6 +291,8 @@ function stopSession(): void {
   $("island").dataset.focus = "";
   $("focus-bar").hidden = true;
   $("focus-line").hidden = true;
+  setMediaSuppressed(false);
+  syncIslandSize();
   renderPill();
 }
 
@@ -295,18 +316,6 @@ function updateFocusUI(): void {
   renderPill();
 }
 
-async function notifyFocusDone(title: string): Promise<void> {
-  try {
-    if (!(await isPermissionGranted())) {
-      const perm = await requestPermission();
-      if (perm !== "granted") return;
-    }
-    sendNotification({ title: "Focus session complete", body: title });
-  } catch {
-    // notifications unavailable — the island flash still signals completion
-  }
-}
-
 function setupFocusUI(): void {
   const clamp = (v: number, max: number) => Math.max(0, Math.min(max, v));
   $("min-up").addEventListener("click", () => {
@@ -326,9 +335,14 @@ function setupFocusUI(): void {
     renderStepper();
   });
   $("focus-start").addEventListener("click", () => {
-    const total = focus.popMin * 60 + focus.popSec;
+    const totalSec = focus.popMin * 60 + focus.popSec;
+    if (focus.popMode === "estimate") {
+      const minutes = totalSec === 0 ? null : Math.max(1, Math.round(totalSec / 60));
+      void storeSetTaskDuration(focus.estimateId, minutes);
+    } else if (totalSec > 0) {
+      startSession(focus.popTask, totalSec);
+    }
     closeFocusPop();
-    if (total > 0) startSession(focus.popTask, total);
   });
   $("focus-pop-cancel").addEventListener("click", closeFocusPop);
   $("focus-overlay").addEventListener("click", (e) => {
@@ -348,29 +362,44 @@ function setupFocusUI(): void {
   });
   $("focus-stop").addEventListener("click", () => stopSession());
 
-  void listen<FocusRequest>("focus-request", ({ payload }) => {
-    openFocusPop(payload.title, payload.minutes);
+  // Play buttons on the tasks page request sessions through a DOM event.
+  document.addEventListener("focus-request", (e) => {
+    const { title, minutes } = (e as CustomEvent<FocusRequest>).detail;
+    openFocusPop(title, minutes);
   });
-}
 
-interface FocusRequest {
-  title: string;
-  minutes: number | null;
+  // Duration chips on the tasks page open the same popover in estimate mode.
+  document.addEventListener("duration-request", (e) => {
+    const { id, title, minutes } = (e as CustomEvent<FocusRequest & { id: number }>).detail;
+    openFocusPop(title, minutes, "estimate", id);
+  });
+
+  // Clicking outside the island while transient UI is pinned dismisses it.
+  void listen("notch://outside", () => {
+    if (!$("focus-overlay").hidden) closeFocusPop();
+    else void api.collapseNow();
+  });
 }
 
 /* ============================ stage (from daemon) ============================ */
 
 function islandSize(): [number, number] {
   if ($("island").dataset.stage !== "expanded") return ISLAND_PILL;
-  if ($("island").dataset.page === "tasks") return ISLAND_TASKS;
-  return $("settings-view").hidden ? ISLAND_DASHBOARD : ISLAND_SETTINGS;
+  if ($("island").dataset.page !== "dashboard") return ISLAND_PAGE;
+  // The media strip reserves its height only while it is actually shown.
+  const mediaBarShown = !$("media-card").hidden && $("focus-bar").hidden;
+  return mediaBarShown ? ISLAND_DASHBOARD : [ISLAND_DASHBOARD[0], 286];
 }
 
-/** Keeps data-view/data-page metadata and the daemon's island size in sync. */
+/** Publishes the live island size so the daemon's hit-testing matches. */
 function syncIslandSize(): void {
   const island = $("island");
-  island.dataset.view = $("settings-view").hidden ? "main" : "settings";
   const [w, h] = islandSize();
+  if (island.dataset.stage === "expanded" && island.dataset.page === "dashboard") {
+    island.style.height = `${h}px`;
+  } else {
+    island.style.height = "";
+  }
   void api.setIslandSize(w, h);
 }
 
@@ -381,10 +410,9 @@ function setupStageListener(): void {
     if (payload.stage !== "expanded") {
       // Leaving the expanded stage resets transient UI.
       closeFocusPop();
-      closeSettings();
+      closeSettingsPage();
       closeTasksPage();
       void refreshStats();
-      void refreshTaskPreview();
     }
     syncIslandSize();
   });
@@ -392,20 +420,25 @@ function setupStageListener(): void {
   $("pill").addEventListener("click", () => void api.expandNow());
   $("collapse-btn").addEventListener("click", () => void api.collapseNow());
   $("tasks-btn").addEventListener("click", () => openTasksPage());
+  $("settings-btn").addEventListener("click", () => openSettingsPage());
 }
 
-/* ============================ tasks page ============================ */
+/* ============================ pages ============================ */
 
 function tasksPageOpen(): boolean {
   return $("island").dataset.page === "tasks";
 }
 
+function settingsPageOpen(): boolean {
+  return $("island").dataset.page === "settings";
+}
+
 function openTasksPage(): void {
-  closeSettings();
+  closeSettingsPage();
   $("island").dataset.page = "tasks";
   syncIslandSize();
   void api.setPin(true);
-  refreshTasksPage();
+  void storeRefreshTasks();
 }
 
 function closeTasksPage(): void {
@@ -415,7 +448,22 @@ function closeTasksPage(): void {
   setPin(false);
 }
 
-/* ============================ settings ============================ */
+function openSettingsPage(): void {
+  closeTasksPage();
+  $("island").dataset.page = "settings";
+  syncIslandSize();
+  void api.setPin(true);
+  void loadSettings();
+}
+
+function closeSettingsPage(): void {
+  if (!settingsPageOpen()) return;
+  $("island").dataset.page = "dashboard";
+  syncIslandSize();
+  setPin(false);
+}
+
+/* ============================ settings page content ============================ */
 
 let cfg: WidgetConfig = { mode: "all", apps: [], watch_folders: null };
 
@@ -425,8 +473,20 @@ function renderModeSeg(): void {
     .forEach((b) => b.classList.toggle("active", b.dataset.mode === cfg.mode));
 }
 
-function renderAppChips(recent: AppCount[]): void {
-  const wrap = $("app-chips");
+function appSwitch(enabled: boolean, onToggle: () => void): HTMLButtonElement {
+  const sw = document.createElement("button");
+  sw.className = "switch" + (enabled ? " on" : "");
+  sw.setAttribute("role", "switch");
+  sw.addEventListener("click", (e) => {
+    e.stopPropagation();
+    onToggle();
+  });
+  return sw;
+}
+
+/** Tracking list: icon · name · count · per-app switch. */
+function renderAppList(recent: AppCount[]): void {
+  const wrap = $("app-list");
   wrap.innerHTML = "";
   const names = new Set<string>([
     ...cfg.apps.map((a) => a.toLowerCase()),
@@ -439,14 +499,23 @@ function renderAppChips(recent: AppCount[]): void {
   );
 
   for (const n of sorted) {
-    const chip = document.createElement("button");
-    chip.className = "chip";
-    chip.classList.toggle(
-      "on",
-      cfg.mode === "all" || cfg.apps.some((a) => a.toLowerCase() === n),
-    );
-    chip.textContent = `${n.replace(/\.exe$/i, "")} · ${countOf(n)}`;
-    chip.addEventListener("click", () => {
+    const row = document.createElement("div");
+    row.className = "app-item";
+
+    const ico = document.createElement("span");
+    ico.className = "usage-ico";
+    applyAppIcon(ico, n, "&#x25A1;");
+
+    const name = document.createElement("span");
+    name.className = "app-item-name";
+    name.textContent = n.replace(/\.exe$/i, "");
+
+    const count = document.createElement("span");
+    count.className = "app-item-count";
+    count.textContent = countOf(n) ? `${countOf(n)}/wk` : "";
+
+    const enabled = cfg.mode === "all" || cfg.apps.some((a) => a.toLowerCase() === n);
+    const sw = appSwitch(enabled, () => {
       if (cfg.mode === "all") {
         cfg.mode = "allowlist";
         cfg.apps = [...names];
@@ -455,18 +524,61 @@ function renderAppChips(recent: AppCount[]): void {
       cfg.apps = has
         ? cfg.apps.filter((a) => a.toLowerCase() !== n)
         : [...cfg.apps, n];
-      renderAppChips(recent);
+      renderAppList(recent);
       renderModeSeg();
     });
-    wrap.appendChild(chip);
+
+    row.append(ico, name, count, sw);
+    wrap.appendChild(row);
   }
-  if (!sorted.length) wrap.innerHTML = '<span class="empty">No apps seen yet</span>';
+  if (!sorted.length) {
+    wrap.innerHTML = '<span class="empty">No apps seen yet</span>';
+  }
 }
 
-async function openSettings(): Promise<void> {
-  $("main-view").hidden = true;
-  $("settings-view").hidden = false;
-  syncIslandSize();
+function renderUsage(recent: AppCount[]): void {
+  const wrap = $("usage-list");
+  wrap.innerHTML = "";
+  if (!recent.length) {
+    wrap.innerHTML = '<span class="empty">No usage recorded yet</span>';
+    return;
+  }
+  const total = recent.reduce((sum, r) => sum + r.count, 0) || 1;
+  const max = Math.max(...recent.map((r) => r.count));
+
+  for (const r of recent) {
+    const row = document.createElement("div");
+    row.className = "usage-row";
+
+    const ico = document.createElement("span");
+    ico.className = "usage-ico";
+    applyAppIcon(ico, r.app, "&#x25A1;");
+
+    const name = document.createElement("span");
+    name.className = "usage-name";
+    name.textContent = r.app.replace(/\.exe$/i, "");
+
+    const bar = document.createElement("div");
+    bar.className = "usage-bar";
+    const fill = document.createElement("div");
+    fill.className = "usage-bar-fill";
+    fill.style.width = `${Math.max(4, (r.count / max) * 100)}%`;
+    bar.appendChild(fill);
+
+    const count = document.createElement("span");
+    count.className = "usage-count";
+    count.textContent = String(r.count);
+
+    const share = document.createElement("span");
+    share.className = "usage-share";
+    share.textContent = `${Math.round((r.count / total) * 100)}%`;
+
+    row.append(ico, name, bar, count, share);
+    wrap.appendChild(row);
+  }
+}
+
+async function loadSettings(): Promise<void> {
   try {
     const [loaded, recent] = await Promise.all([api.getConfig(), api.recentApps()]);
     cfg = {
@@ -475,18 +587,12 @@ async function openSettings(): Promise<void> {
       watch_folders: loaded.watch_folders ?? null,
     };
     renderModeSeg();
-    renderAppChips(recent);
+    renderAppList(recent);
+    renderUsage(recent);
     ($("folders-input") as HTMLInputElement).value = (cfg.watch_folders ?? []).join("; ");
   } catch {
     // ignore
   }
-}
-
-function closeSettings(): void {
-  if ($("settings-view").hidden) return;
-  $("settings-view").hidden = true;
-  $("main-view").hidden = false;
-  syncIslandSize();
 }
 
 async function saveSettings(): Promise<void> {
@@ -505,17 +611,12 @@ async function saveSettings(): Promise<void> {
   setTimeout(() => ($("save-hint").hidden = true), 3000);
 }
 
-function setupSettings(): void {
-  $("settings-btn").addEventListener("click", () => {
-    const hidden = $("settings-view").hidden;
-    if (hidden) void openSettings();
-    else closeSettings();
-  });
+function setupSettingsPage(): void {
   document.querySelectorAll<HTMLButtonElement>("#mode-seg .seg-btn").forEach((b) =>
     b.addEventListener("click", () => {
       cfg.mode = (b.dataset.mode as WidgetConfig["mode"]) ?? "all";
       if (cfg.mode === "all") cfg.apps = [];
-      void openSettings();
+      void loadSettings();
     }),
   );
   $("app-add").addEventListener("click", () => {
@@ -527,9 +628,24 @@ function setupSettings(): void {
       if (cfg.mode === "all") cfg.mode = "allowlist";
     }
     input.value = "";
-    void openSettings();
+    void loadSettings();
   });
   $("save-btn").addEventListener("click", () => void saveSettings());
+  $("settings-close").addEventListener("click", () => closeSettingsPage());
+}
+
+/* ============================ dashboard add ============================ */
+
+function setupDashboardAdd(): void {
+  const input = $("todo-add-input") as HTMLInputElement;
+  const submit = (): void => {
+    const t = input.value.trim();
+    if (!t) return;
+    input.value = "";
+    void storeAddTask({ title: t, notes: null, due_date: null, duration_min: null });
+  };
+  $("todo-add-btn").addEventListener("click", submit);
+  input.addEventListener("keydown", (e) => e.key === "Enter" && submit());
 }
 
 /* ============================ boot ============================ */
@@ -542,19 +658,21 @@ function main(): void {
 
   setupStageListener();
   setupFocusUI();
-  setupSettings();
+  setupSettingsPage();
+  setupDashboardAdd();
   setupTasksPage({
-    onChanged: () => void refreshTaskPreview(),
     onClose: () => closeTasksPage(),
   });
+  subscribeTasks(renderTaskPreview);
+  setupMedia(syncIslandSize);
   syncIslandSize();
-
-  document.addEventListener("tasks-changed", () => void refreshTaskPreview());
 
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
     if (!$("focus-overlay").hidden) {
       closeFocusPop();
+    } else if (settingsPageOpen()) {
+      closeSettingsPage();
     } else if (tasksPageOpen()) {
       closeTasksPage();
     } else {
@@ -563,7 +681,7 @@ function main(): void {
   });
 
   void refreshStats();
-  void refreshTaskPreview();
+  void storeRefreshTasks();
   renderPill();
   setInterval(renderPill, CLOCK_POLL_MS);
   setInterval(() => void refreshStats(), STATS_POLL_MS);

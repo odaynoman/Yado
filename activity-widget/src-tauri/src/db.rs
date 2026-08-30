@@ -232,6 +232,7 @@ fn collect_tasks<P: rusqlite::Params>(
 /// - `unscheduled` open tasks without a due date
 /// - `open`        every open task (dashboard preview)
 /// - `recent`      recently completed, newest first
+/// - `all`         every task — the store's single source of truth
 pub fn list_tasks(
     conn: &Connection,
     filter: &str,
@@ -253,6 +254,11 @@ pub fn list_tasks(
         ("recent", _) => {
             stmt = conn.prepare(
                 "SELECT id, title, notes, due_date, duration_min, done, created_ts FROM tasks WHERE done = 1 ORDER BY done_ts DESC LIMIT 20",
+            )?;
+        }
+        ("all", _) => {
+            stmt = conn.prepare(
+                "SELECT id, title, notes, due_date, duration_min, done, created_ts FROM tasks ORDER BY done ASC, (CASE WHEN done = 1 THEN done_ts ELSE created_ts END) DESC LIMIT 200",
             )?;
         }
         _ => {
@@ -279,6 +285,18 @@ pub fn set_task_duration(
     conn.execute(
         "UPDATE tasks SET duration_min = ?2 WHERE id = ?1",
         rusqlite::params![id, duration_min],
+    )
+}
+
+pub fn update_task(
+    conn: &Connection,
+    id: i64,
+    title: &str,
+    notes: Option<&str>,
+) -> Result<usize, rusqlite::Error> {
+    conn.execute(
+        "UPDATE tasks SET title = ?2, notes = ?3 WHERE id = ?1",
+        rusqlite::params![id, title, notes],
     )
 }
 

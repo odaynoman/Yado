@@ -3,9 +3,12 @@
 //! Stage transitions live in [`notch_daemon`]; this module only mutates
 //! [`notch_daemon::Shared`] and asks it to apply.
 
+mod app_icons;
 mod commands;
 mod db;
+mod media;
 mod notch_daemon;
+mod sound;
 mod tracker;
 mod windows;
 
@@ -60,6 +63,15 @@ fn toggle_main(app: &tauri::AppHandle, shared: &SharedHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Must be the first plugin: a second app launch is redirected here
+        // and simply surfaces the running widget.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.show();
+                windows::place_main(&win);
+            }
+            notch_daemon::apply_stage(app, Stage::Compact);
+        }))
         .plugin(notification_plugin())
         .invoke_handler(tauri::generate_handler![
             commands::expand_now,
@@ -75,7 +87,15 @@ pub fn run() {
             commands::list_tasks,
             commands::set_task_done,
             commands::set_task_duration,
-            commands::delete_task
+            commands::update_task,
+            commands::delete_task,
+            commands::get_app_icon,
+            commands::notify_focus_done,
+            media::media_play,
+            media::media_pause,
+            media::media_next,
+            media::media_prev,
+            media::media_seek
         ])
         .setup(|app| {
             let data_dir = app
@@ -86,6 +106,8 @@ pub fn run() {
             let conn = db::init(&data_dir.join("activities.db"))
                 .expect("failed to initialize sqlite database");
             app.manage(db::Db(Mutex::new(conn)));
+            app_icons::init(&data_dir);
+            app.manage(media::MediaHandle::default());
 
             let shared: SharedHandle = Arc::new(Mutex::new(notch_daemon::Shared {
                 stage: Stage::Compact,
@@ -97,7 +119,8 @@ pub fn run() {
             app.manage(shared.clone());
 
             tracker::spawn_focus_tracker(data_dir.clone());
-            tracker::spawn_file_watcher(data_dir);
+            tracker::spawn_file_watcher(data_dir.clone());
+            media::spawn(app.handle().clone());
 
             let main = app
                 .get_webview_window("main")

@@ -22,6 +22,7 @@ const OPEN_DWELL: Duration = Duration::from_millis(180);
 /// Grace period after the cursor leaves before the panel collapses.
 const CLOSE_GRACE: Duration = Duration::from_millis(400);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
+const VK_LBUTTON: i32 = 0x01;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Stage {
@@ -165,11 +166,17 @@ pub fn collapse_now(shared: &SharedHandle, app: &AppHandle) {
 
 pub fn spawn(app: AppHandle, shared: SharedHandle) {
     #[cfg(windows)]
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetAsyncKeyState(vkey: i32) -> i16;
+    }
+
     std::thread::spawn(move || {
         let mut dwell_since: Option<Instant> = None;
         let mut outside_since: Option<Instant> = None;
         let mut block_dwell = false;
         let mut ignore = true;
+        let mut prev_left_down = false;
 
         loop {
             std::thread::sleep(POLL_INTERVAL);
@@ -203,6 +210,28 @@ pub fn spawn(app: AppHandle, shared: SharedHandle) {
 
             let over_island = contains(&island, cx, cy);
             let over_pill = contains(&pill, cx, cy);
+
+            // Global left-click edge: pressing outside the expanded island
+            // dismisses it (same contract as the pill), routed through the
+            // frontend when transient UI is pinned.
+            let left_down = (unsafe { GetAsyncKeyState(VK_LBUTTON) } as u16) & 0x8000 != 0;
+            let pressed_outside = left_down && !prev_left_down && stage == Stage::Expanded && !over_island;
+            prev_left_down = left_down;
+            if pressed_outside {
+                if pinned {
+                    let _ = app.emit_to("main", "notch://outside", ());
+                } else {
+                    if let Ok(mut s) = shared.lock() {
+                        s.stage = Stage::Compact;
+                        s.collapse_requested = true;
+                    }
+                    apply_stage(&app, Stage::Compact);
+                    dwell_since = None;
+                    outside_since = None;
+                    block_dwell = true;
+                    continue;
+                }
+            }
 
             // Consume one-shot collapse requests: re-arm the hover dwell
             // only after the pointer has left the pill.

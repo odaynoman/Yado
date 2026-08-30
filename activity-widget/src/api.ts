@@ -43,5 +43,16 @@ export const api = {
     invoke("set_task_done", { id, done }),
   setTaskDuration: (id: number, duration_min: number | null) =>
     invoke("set_task_duration", { id, duration_min }),
+  updateTask: (id: number, title: string, notes: string | null) =>
+    invoke("update_task", { id, title, notes }),
   deleteTask: (id: number) => invoke("delete_task", { id }),
+
+  getAppIcon: (app: string) => invoke<string | null>("get_app_icon", { app }),
+  notifyFocusDone: (title: string) => invoke("notify_focus_done", { title }),
+
+  mediaPlay: () => invoke("media_play"),
+  mediaPause: () => invoke("media_pause"),
+  mediaNext: () => invoke("media_next"),
+  mediaPrev: () => invoke("media_prev"),
+  mediaSeek: (positionSec: number) => invoke("media_seek", { positionSec }),
 };

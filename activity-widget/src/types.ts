@@ -26,7 +26,7 @@ export interface Task {
   created_ts: number;
 }
 
-export type TaskFilter = "day" | "unscheduled" | "open" | "recent";
+export type TaskFilter = "day" | "unscheduled" | "open" | "recent" | "all";
 
 export interface WidgetConfig {
   mode: "all" | "allowlist";

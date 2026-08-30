@@ -1,7 +1,7 @@
 use tauri::{AppHandle, Manager, State};
 
 use crate::notch_daemon::{self, SharedHandle};
-use crate::{db, tracker};
+use crate::{app_icons, db, tracker};
 
 fn now_ts() -> i64 {
     std::time::SystemTime::now()
@@ -35,8 +35,8 @@ pub fn set_pin(shared: State<'_, SharedHandle>, pin: bool) {
 #[tauri::command]
 pub fn set_island_size(shared: State<'_, SharedHandle>, width: f64, height: f64) {
     if let Ok(mut s) = shared.lock() {
-        s.island_w = width.clamp(44.0, 560.0);
-        s.island_h = height.clamp(44.0, 448.0);
+        s.island_w = width.clamp(44.0, 600.0);
+        s.island_h = height.clamp(44.0, 464.0);
     }
 }
 
@@ -154,9 +154,54 @@ pub fn set_task_duration(
 }
 
 #[tauri::command]
+pub fn update_task(
+    state: State<'_, db::Db>,
+    id: i64,
+    title: String,
+    notes: Option<String>,
+) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    db::update_task(&conn, id, &title, notes.as_deref())
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn delete_task(state: State<'_, db::Db>, id: i64) -> Result<(), String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     db::delete_task(&conn, id)
         .map(|_| ())
         .map_err(|e| e.to_string())
+}
+
+// ---------- app icons ----------
+
+#[tauri::command]
+pub fn get_app_icon(app: String) -> Option<String> {
+    app_icons::data_url(&app)
+}
+
+#[tauri::command]
+pub fn notify_focus_done(app: AppHandle, title: String) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+    eprintln!("[focus] session completed, notifying: {title}");
+    crate::sound::notification_chime();
+    match app
+        .notification()
+        .builder()
+        .title("Focus session complete")
+        .body(&title)
+        .show()
+    {
+        Ok(_) => {
+            eprintln!("[focus] toast shown");
+            Ok(())
+        }
+        Err(e) => {
+            // Toasts from unsigned dev builds are dropped by Windows; the
+            // chime above is the reliable signal until the app is installed.
+            eprintln!("[focus] toast not shown: {e}");
+            Ok(())
+        }
+    }
 }

@@ -42,30 +42,29 @@ function fmtClock(totalSec: number): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-/* ============================ heatmap (current month) ============================ */
+/* ============================ heatmap (rolling window) ============================ */
 
-/** Month-calendar heat cells: Mon–Sun columns, one calendar month. */
+/** 12 columns x 3 rows = 36 days ending today. Every cell is a real day —
+ *  days from the previous month fill the start naturally, so the grid is
+ *  always full and the last cell is always today. */
+const HEATMAP_COLS = 12;
+const HEATMAP_DAYS = HEATMAP_COLS * 3;
+
 const heatCells: { el: HTMLDivElement; date: string }[] = (() => {
   const grid = $("heatmap");
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth();
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const pad = (new Date(year, month, 1).getDay() + 6) % 7;
+  const today = new Date();
+  const start = new Date(today);
+  start.setDate(start.getDate() - (HEATMAP_DAYS - 1));
 
-  for (let i = 0; i < pad; i++) {
-    const filler = document.createElement("div");
-    filler.className = "cell filler";
-    grid.appendChild(filler);
-  }
   const cells: { el: HTMLDivElement; date: string }[] = [];
-  for (let d = 1; d <= daysInMonth; d++) {
-    const date = new Date(year, month, d);
+  for (let i = 0; i < HEATMAP_DAYS; i++) {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
     const el = document.createElement("div");
     el.className = "cell";
     el.dataset.level = "0";
     grid.appendChild(el);
-    cells.push({ el, date: fmtDate(date) });
+    cells.push({ el, date: fmtDate(d) });
   }
   return cells;
 })();

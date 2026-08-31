@@ -126,7 +126,7 @@ pub fn get_stats(conn: &Connection) -> Result<Stats, rusqlite::Error> {
     }
 
     let mut heatmap_stmt = conn.prepare(
-        "SELECT date(ts, 'unixepoch', 'localtime') d, COUNT(*) c FROM events WHERE d >= date('now', 'localtime', '-83 days') GROUP BY d",
+        "SELECT date(ts, 'unixepoch', 'localtime') d, COUNT(*) c FROM events WHERE d >= date('now', 'localtime', '-35 days') GROUP BY d",
     )?;
     let heatmap = heatmap_stmt
         .query_map([], |row| {

@@ -23,10 +23,25 @@ use tauri_plugin_notification::init as notification_plugin;
 
 use notch_daemon::{SharedHandle, Stage};
 
+/// Recursively copies a directory tree (used by the legacy-data migration
+/// when a same-volume move is not possible).
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let target = dst.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_recursive(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
+}
+
 /// Tray toggle: Hide parks the widget; Show restores the compact pill
 /// on the desktop layer.
-fn toggle_main(app: &tauri::AppHandle, shared: &SharedHandle) {
-    let to_hidden = {
+fn toggle_main(app: &tauri::AppHandle, shared: &SharedHandle) {    let to_hidden = {
         let mut s = match shared.lock() {
             Ok(s) => s,
             Err(_) => return,
@@ -98,10 +113,22 @@ pub fn run() {
             media::media_seek
         ])
         .setup(|app| {
+            // Rebrand migration: the first releases stored data under the
+            // `com.yado.activitywidget` identifier. Move it over so users
+            // keep their history, config and app-icon cache.
             let data_dir = app
                 .path()
                 .app_data_dir()
                 .expect("failed to resolve app data dir");
+            if let Some(parent) = data_dir.parent() {
+                let legacy = parent.join("com.yado.activitywidget");
+                if !data_dir.exists() && legacy.exists() {
+                    if std::fs::rename(&legacy, &data_dir).is_err() {
+                        let _ = copy_dir_recursive(&legacy, &data_dir);
+                    }
+                    eprintln!("[migrate] legacy data moved to {}", data_dir.display());
+                }
+            }
             std::fs::create_dir_all(&data_dir).expect("failed to create data dir");
             let conn = db::init(&data_dir.join("activities.db"))
                 .expect("failed to initialize sqlite database");
@@ -147,7 +174,7 @@ pub fn run() {
 
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().expect("no default icon").clone())
-                .tooltip("Activity Widget")
+                .tooltip("Yado Notch")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event({

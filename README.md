@@ -1,27 +1,42 @@
-# Activity Widget
+# Yado Notch
 
-A native-feeling **desktop activity notch** for Windows — a compact pill that lives at the
-top-center of your screen, expands into a dashboard, and quietly tracks everything you do:
-apps you focus, files you save, focus sessions you run, and music you play.
+A native-feeling **activity notch** for Windows — a compact pill that lives at the
+top-center of your screen, expands into a dashboard on hover, and quietly tracks
+everything you do: apps you focus, files you save, focus sessions you run, and
+music you play.
 
 Built with **Tauri 2 + TypeScript**. No framework runtime, no telemetry, everything local.
 
 ## Features
 
-- **Activity tracking** — apps you focus and files you save are logged to a local SQLite
-  database and rendered as a GitHub-style contribution heatmap + weekly usage stats
-- **Tasks** — calendar scheduling, due dates, estimates, notes, done list, quick reschedule;
-  a single-source store keeps every view in sync
-- **Focus sessions** — pick any duration (down to the second), get a countdown in the pill,
-  a progress line, a system chime and a native toast when time is up
-- **System media controls** — play/pause/prev/next/seek for whatever app is playing
-  (Spotify, Chrome, players…) via Windows SMTC
-- **Notch interaction** — hover to expand, click-outside to dismiss, desktop-level widget
-  that sinks under your windows, spring motion everywhere
-- **App icons** — real per-app icons extracted from exes, shown in stats and lists
-- **Single instance** — launching twice just refocuses the widget
+**Tracking** — apps you focus and file saves are logged to a local SQLite database and
+rendered as a month heatmap, weekly usage bars and per-app statistics.
 
-## Build
+**Tasks** — calendar scheduling, due dates, duration estimates, notes, a done list and
+quick rescheduling. A single-source store keeps the dashboard preview and the tasks
+page perfectly in sync.
+
+**Focus sessions** — pick any duration (down to the second), get a countdown in the
+pill, a progress line on the dock, and a system chime + native toast when time is up.
+
+**Media** — play/pause/prev/next/seek for whatever app is currently playing
+(Spotify, Chrome, players…) via the Windows System Media Transport Controls.
+
+**Notch behavior** — hover to expand, click-outside to dismiss, spring motion
+everywhere, and a desktop-level widget that sinks under your windows instead of
+fighting them for attention.
+
+**App icons** — real per-app icons are extracted from executables and shown in
+usage stats, tracking switches and the media strip.
+
+**Single instance** — launching the app twice just refocuses the running notch.
+
+## Install
+
+Download `Yado Notch_x.x.x_x64-setup.exe` from
+[Releases](../../releases) and run it. Launch **Yado Notch** from the Start Menu.
+
+## Build from source
 
 ```bash
 npm install
@@ -33,21 +48,39 @@ Requirements: Node.js 18+, Rust (MSVC toolchain), WebView2 (preinstalled on Wind
 
 ## How it works
 
-The window is a *fixed transparent canvas*. A single Rust "notch daemon" polls the cursor
-at 50 ms and owns the presentation state machine (`compact ⇄ expanded`): hover dwell,
-close grace, click-through outside the visible island, and z-order transitions
+The window is a *fixed transparent canvas*. A single Rust "notch daemon" polls the
+cursor at 50 ms and owns the presentation state machine (`compact ⇄ expanded`): hover
+dwell, close grace, click-through outside the visible island, and z-order transitions
 (raise on expand, sink to the desktop layer otherwise). The visible island morphs
 inside the canvas with CSS springs — the window itself is never resized at runtime.
 
-See the source: `src-tauri/src/notch_daemon.rs`, `src-tauri/src/windows.rs`.
-
-## Layout
+Key sources:
 
 ```
-src/            TypeScript frontend (vanilla, multi-entry)
-src-tauri/      Rust backend (commands, tracker, media, daemon, db)
+src-tauri/src/notch_daemon.rs   stage state machine, click-through, z-order
+src-tauri/src/tracker.rs        app-focus + file-save tracking, allowlist
+src-tauri/src/media.rs          SMTC media integration
+src-tauri/src/db.rs             SQLite schema + queries
+src/tasksStore.ts               single-source task state (frontend)
 ```
+
+## Configuration
+
+Tracking is configurable via `%APPDATA%\com.yado.notch\config.json`
+(hot-reloads in ~1.5 s):
+
+```json
+{
+  "mode": "all",
+  "apps": ["chrome.exe", "cursor.exe"],
+  "watch_folders": ["D:\\projects\\app"]
+}
+```
+
+- `mode`: `"all"` tracks every app, `"allowlist"` only the chosen ones
+- `watch_folders`: folders watched for save events (omit to auto-watch
+  Desktop, Documents, Downloads, Pictures and Videos)
 
 ## License
 
-MIT
+[MIT](LICENSE)

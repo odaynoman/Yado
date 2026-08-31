@@ -3,26 +3,6 @@
 version = 4
 
 [[package]]
-name = "activity-widget"
-version = "0.1.2"
-dependencies = [
- "base64 0.22.1",
- "dirs 5.0.1",
- "image",
- "notify",
- "rusqlite",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-notification",
- "tauri-plugin-single-instance",
- "windows",
- "windows-collections",
- "windows-future",
-]
-
-[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5264,6 +5244,26 @@ dependencies = [
  "libc",
  "once_cell",
  "pkg-config",
+]
+
+[[package]]
+name = "yado-notch"
+version = "0.2.0"
+dependencies = [
+ "base64 0.22.1",
+ "dirs 5.0.1",
+ "image",
+ "notify",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-notification",
+ "tauri-plugin-single-instance",
+ "windows",
+ "windows-collections",
+ "windows-future",
 ]
 
 [[package]]

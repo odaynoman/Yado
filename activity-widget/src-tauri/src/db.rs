@@ -293,10 +293,12 @@ pub fn update_task(
     id: i64,
     title: &str,
     notes: Option<&str>,
+    due_date: Option<&str>,
+    duration_min: Option<i64>,
 ) -> Result<usize, rusqlite::Error> {
     conn.execute(
-        "UPDATE tasks SET title = ?2, notes = ?3 WHERE id = ?1",
-        rusqlite::params![id, title, notes],
+        "UPDATE tasks SET title = ?2, notes = ?3, due_date = ?4, duration_min = ?5 WHERE id = ?1",
+        rusqlite::params![id, title, notes, due_date, duration_min],
     )
 }
 

@@ -1,5 +1,6 @@
 import { ICONS } from "./icons";
 import {
+  addTask,
   deleteTask,
   getTasks,
   refreshTasks,
@@ -105,7 +106,7 @@ function setupCalendar(): void {
 
 /* ============================ task list ============================ */
 
-function taskRow(t: Task): HTMLElement {
+function taskRow(t: Task, overdue = false): HTMLElement {
   const row = document.createElement("div");
   row.className = "trow";
 
@@ -127,9 +128,21 @@ function taskRow(t: Task): HTMLElement {
     body.appendChild(notes);
   }
 
-  const dueChip = document.createElement("span");
-  dueChip.className = "chip";
-  dueChip.textContent = t.due_date ? fmtDayLabel(t.due_date) : "no date";
+  const dueChip = document.createElement("button");
+  dueChip.className = "chip" + (overdue ? " overdue" : "");
+  dueChip.title = "Click to reschedule";
+  dueChip.textContent = overdue
+    ? "overdue"
+    : t.due_date
+      ? fmtDayLabel(t.due_date)
+      : "no date";
+  dueChip.addEventListener("click", () => {
+    document.dispatchEvent(
+      new CustomEvent("schedule-request", {
+        detail: { id: t.id, title: t.title, due_date: t.due_date },
+      }),
+    );
+  });
 
   const durationChip = document.createElement("button");
   durationChip.className = "chip";
@@ -197,12 +210,21 @@ function doneRow(t: Task): HTMLElement {
   return row;
 }
 
-/** Re-renders the list purely from the store — no fetching here. */
+/** Re-renders the list purely from the store — no fetching here.
+ *  Today's view also pulls in overdue tasks (they demand attention). */
 function renderList(): void {
   const all = getTasks();
+  const today = todayStr();
   const visible =
     state.mode === "day"
-      ? all.filter((t) => !t.done && t.due_date === state.selectedDay)
+      ? all.filter(
+          (t) =>
+            !t.done &&
+            (t.due_date === state.selectedDay ||
+              (state.selectedDay === today &&
+                t.due_date !== null &&
+                t.due_date < today)),
+        )
       : all.filter((t) => !t.done && t.due_date === null);
   const done = all.filter((t) => t.done);
 
@@ -218,7 +240,11 @@ function renderList(): void {
     }</span>`;
     return;
   }
-  for (const t of visible) list.appendChild(taskRow(t));
+  for (const t of visible) {
+    const overdue =
+      state.selectedDay === today && !!t.due_date && t.due_date < today;
+    list.appendChild(taskRow(t, overdue));
+  }
 
   if (done.length) {
     const header = document.createElement("span");
@@ -232,6 +258,7 @@ function renderList(): void {
 function renderEdit(row: HTMLElement, t: Task): void {
   row.classList.add("editing");
   row.innerHTML = "";
+  let pendingDue = t.due_date;
 
   const fields = document.createElement("div");
   fields.className = "edit-fields";
@@ -243,6 +270,36 @@ function renderEdit(row: HTMLElement, t: Task): void {
   const notesInput = document.createElement("input");
   notesInput.value = t.notes ?? "";
   notesInput.placeholder = "Notes (optional)";
+
+  const dueRow = document.createElement("div");
+  dueRow.className = "edit-due-row";
+  const dueLabel = document.createElement("span");
+  dueLabel.className = "edit-due-label";
+  const setDueLabel = (): void => {
+    dueLabel.textContent = pendingDue
+      ? `Scheduled: ${fmtDayLabel(pendingDue)}`
+      : "Not scheduled";
+  };
+  setDueLabel();
+
+  const dueBtn = (label: string, due: string | null): HTMLButtonElement => {
+    const b = document.createElement("button");
+    b.className = "mini-btn";
+    b.textContent = label;
+    b.addEventListener("click", () => {
+      pendingDue = due;
+      setDueLabel();
+    });
+    return b;
+  };
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  dueRow.append(
+    dueBtn("Today", todayStr()),
+    dueBtn("Tomorrow", fmtDateLocal(tomorrow)),
+    dueBtn("No date", null),
+    dueLabel,
+  );
 
   const actions = document.createElement("div");
   actions.className = "edit-actions";
@@ -258,7 +315,11 @@ function renderEdit(row: HTMLElement, t: Task): void {
   const submit = (): void => {
     const title = titleInput.value.trim();
     if (!title) return;
-    void updateTask(t.id, title, notesInput.value.trim() || null);
+    void updateTask(t.id, {
+      title,
+      notes: notesInput.value.trim() || null,
+      due_date: pendingDue,
+    });
   };
 
   save.addEventListener("click", submit);
@@ -273,7 +334,7 @@ function renderEdit(row: HTMLElement, t: Task): void {
   });
 
   actions.append(save, cancel);
-  fields.append(titleInput, notesInput, actions);
+  fields.append(titleInput, notesInput, dueRow, actions);
   row.append(fields);
   titleInput.focus();
   titleInput.select();
@@ -300,14 +361,12 @@ function setupAddForm(): void {
   const submit = (): void => {
     const t = title.value.trim();
     if (!t) return;
-    void import("./tasksStore").then(({ addTask }) =>
-      addTask({
-        title: t,
-        notes: notes.value.trim() || null,
-        due_date: state.mode === "day" ? state.selectedDay : null,
-        duration_min: null,
-      }),
-    );
+    void addTask({
+      title: t,
+      notes: notes.value.trim() || null,
+      due_date: state.mode === "day" ? state.selectedDay : null,
+      duration_min: null,
+    });
     resetAddForm();
   };
   title.addEventListener("keydown", (e) => e.key === "Enter" && submit());

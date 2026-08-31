@@ -340,6 +340,50 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ================= chips (task metadata) ================= */
+
+.chip {
+  font-size: 9.5px;
+  padding: 3px 8px;
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  flex-shrink: 0;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+button.chip:hover {
+  background: var(--card-2);
+  color: var(--text);
+}
+
+.chip.overdue {
+  color: var(--danger);
+  border-color: rgba(248, 113, 113, 0.45);
+  background: rgba(248, 113, 113, 0.08);
+}
+
+button.chip.overdue:hover {
+  background: rgba(248, 113, 113, 0.15);
+  color: var(--danger);
+}
+
+/* edit mode: due-date quick controls */
+
+.edit-due-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.edit-due-label {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-left: auto;
+}
+
 /* ---- dashboard quick add ---- */
 
 .todo-add {

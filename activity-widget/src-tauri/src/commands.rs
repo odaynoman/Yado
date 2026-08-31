@@ -159,11 +159,20 @@ pub fn update_task(
     id: i64,
     title: String,
     notes: Option<String>,
+    due_date: Option<String>,
+    duration_min: Option<i64>,
 ) -> Result<(), String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
-    db::update_task(&conn, id, &title, notes.as_deref())
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    db::update_task(
+        &conn,
+        id,
+        &title,
+        notes.as_deref(),
+        due_date.as_deref(),
+        duration_min,
+    )
+    .map(|_| ())
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

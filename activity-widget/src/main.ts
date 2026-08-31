@@ -9,8 +9,8 @@ import {
   getTasks,
   refreshTasks as storeRefreshTasks,
   setTaskDone as storeSetTaskDone,
-  setTaskDuration as storeSetTaskDuration,
   subscribeTasks,
+  updateTask as storeUpdateTask,
 } from "./tasksStore";
 import type { AppCount, Stats, Task, WidgetConfig } from "./types";
 import "./tokens.css";
@@ -114,9 +114,18 @@ function previewRow(t: Task): HTMLElement {
     await storeSetTaskDone(t.id, true);
   });
 
+  const body = document.createElement("div");
+  body.className = "task-body";
   const title = document.createElement("span");
   title.className = "task-title";
   title.textContent = t.title;
+  body.appendChild(title);
+  if (t.notes?.trim()) {
+    const notes = document.createElement("span");
+    notes.className = "task-notes";
+    notes.textContent = t.notes;
+    body.appendChild(notes);
+  }
 
   const play = document.createElement("button");
   play.className = "task-play";
@@ -128,7 +137,7 @@ function previewRow(t: Task): HTMLElement {
   });
 
   row.addEventListener("click", () => openTasksPage());
-  row.append(circle, title, play);
+  row.append(circle, body, play);
   return row;
 }
 
@@ -338,7 +347,7 @@ function setupFocusUI(): void {
     const totalSec = focus.popMin * 60 + focus.popSec;
     if (focus.popMode === "estimate") {
       const minutes = totalSec === 0 ? null : Math.max(1, Math.round(totalSec / 60));
-      void storeSetTaskDuration(focus.estimateId, minutes);
+      void storeUpdateTask(focus.estimateId, { duration_min: minutes });
     } else if (totalSec > 0) {
       startSession(focus.popTask, totalSec);
     }
@@ -377,6 +386,7 @@ function setupFocusUI(): void {
   // Clicking outside the island while transient UI is pinned dismisses it.
   void listen("notch://outside", () => {
     if (!$("focus-overlay").hidden) closeFocusPop();
+    else if (!$("schedule-overlay").hidden) closeSchedulePop();
     else void api.collapseNow();
   });
 }
@@ -642,10 +652,88 @@ function setupDashboardAdd(): void {
     const t = input.value.trim();
     if (!t) return;
     input.value = "";
-    void storeAddTask({ title: t, notes: null, due_date: null, duration_min: null });
+    // Tasks captured on the dashboard are planned for today by default.
+    void storeAddTask({
+      title: t,
+      notes: null,
+      due_date: fmtDate(new Date()),
+      duration_min: null,
+    });
   };
   $("todo-add-btn").addEventListener("click", submit);
   input.addEventListener("keydown", (e) => e.key === "Enter" && submit());
+}
+
+/* ============================ scheduling popover ============================ */
+
+const schedule = {
+  taskId: 0,
+  title: "",
+  date: "",
+};
+
+function openSchedulePop(id: number, title: string, due: string | null): void {
+  schedule.taskId = id;
+  schedule.title = title;
+  schedule.date = due ?? fmtDate(new Date());
+  ($("schedule-date") as HTMLInputElement).value = schedule.date;
+  $("schedule-task").textContent = title;
+  $("schedule-overlay").hidden = false;
+  setPin(true);
+}
+
+function closeSchedulePop(): void {
+  if ($("schedule-overlay").hidden) return;
+  $("schedule-overlay").hidden = true;
+  setPin(false);
+}
+
+function setupScheduleUI(): void {
+  const dateInput = $("schedule-date") as HTMLInputElement;
+  $("schedule-today").addEventListener("click", () => {
+    schedule.date = fmtDate(new Date());
+    dateInput.value = schedule.date;
+  });
+  $("schedule-tomorrow").addEventListener("click", () => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    schedule.date = fmtDate(d);
+    dateInput.value = schedule.date;
+  });
+  $("schedule-none").addEventListener("click", () => {
+    schedule.date = "";
+    dateInput.value = "";
+  });
+  dateInput.addEventListener("change", () => {
+    schedule.date = dateInput.value;
+  });
+  $("schedule-apply").addEventListener("click", () => {
+    const due = schedule.date || null;
+    $("schedule-overlay").hidden = true;
+    void storeUpdateTaskDue(schedule.taskId, due);
+    setPin(false);
+  });
+  $("schedule-cancel").addEventListener("click", closeSchedulePop);
+  $("schedule-overlay").addEventListener("click", (e) => {
+    if (e.target === $("schedule-overlay")) closeSchedulePop();
+  });
+
+  // Due-date chips on the tasks page open this popover.
+  document.addEventListener("schedule-request", (e) => {
+    const { id, title, due_date } = (e as CustomEvent<ScheduleRequest>).detail;
+    openSchedulePop(id, title, due_date);
+  });
+}
+
+interface ScheduleRequest {
+  id: number;
+  title: string;
+  due_date: string | null;
+}
+
+/** Due-date changes bypass the generic patch: the popover owns the field. */
+function storeUpdateTaskDue(id: number, due_date: string | null): Promise<void> {
+  return storeUpdateTask(id, { due_date });
 }
 
 /* ============================ boot ============================ */
@@ -658,6 +746,7 @@ function main(): void {
 
   setupStageListener();
   setupFocusUI();
+  setupScheduleUI();
   setupSettingsPage();
   setupDashboardAdd();
   setupTasksPage({
@@ -671,6 +760,8 @@ function main(): void {
     if (e.key !== "Escape") return;
     if (!$("focus-overlay").hidden) {
       closeFocusPop();
+    } else if (!$("schedule-overlay").hidden) {
+      closeSchedulePop();
     } else if (settingsPageOpen()) {
       closeSettingsPage();
     } else if (tasksPageOpen()) {

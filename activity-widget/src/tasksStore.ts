@@ -63,12 +63,21 @@ export async function setTaskDuration(
   await refreshTasks();
 }
 
+/** Partial update: merges the patch with the stored task, then syncs. */
 export async function updateTask(
   id: number,
-  title: string,
-  notes: string | null,
+  patch: Partial<Pick<Task, "title" | "notes" | "due_date" | "duration_min">>,
 ): Promise<void> {
-  await api.updateTask(id, title, notes).catch(() => {});
+  const t = tasks.find((x) => x.id === id);
+  if (!t) return;
+  const merged = {
+    title: patch.title ?? t.title,
+    notes: patch.notes !== undefined ? patch.notes : t.notes,
+    due_date: patch.due_date !== undefined ? patch.due_date : t.due_date,
+    duration_min:
+      patch.duration_min !== undefined ? patch.duration_min : t.duration_min,
+  };
+  await api.updateTask(id, merged).catch(() => {});
   await refreshTasks();
 }
 

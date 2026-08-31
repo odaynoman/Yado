@@ -43,8 +43,22 @@ export const api = {
     invoke("set_task_done", { id, done }),
   setTaskDuration: (id: number, duration_min: number | null) =>
     invoke("set_task_duration", { id, duration_min }),
-  updateTask: (id: number, title: string, notes: string | null) =>
-    invoke("update_task", { id, title, notes }),
+  updateTask: (
+    id: number,
+    input: {
+      title: string;
+      notes: string | null;
+      due_date: string | null;
+      duration_min: number | null;
+    },
+  ) =>
+    invoke("update_task", {
+      id,
+      title: input.title,
+      notes: input.notes,
+      dueDate: input.due_date,
+      durationMin: input.duration_min,
+    }),
   deleteTask: (id: number) => invoke("delete_task", { id }),
 
   getAppIcon: (app: string) => invoke<string | null>("get_app_icon", { app }),

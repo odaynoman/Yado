@@ -599,6 +599,7 @@ async function loadSettings(): Promise<void> {
     renderModeSeg();
     renderAppList(recent);
     renderUsage(recent);
+    void loadAutostart();
     ($("folders-input") as HTMLInputElement).value = (cfg.watch_folders ?? []).join("; ");
   } catch {
     // ignore
@@ -642,6 +643,22 @@ function setupSettingsPage(): void {
   });
   $("save-btn").addEventListener("click", () => void saveSettings());
   $("settings-close").addEventListener("click", () => closeSettingsPage());
+}
+
+/* ============================ autostart ============================ */
+
+async function loadAutostart(): Promise<void> {
+  const sw = $("autostart-switch");
+  const enabled = await api.autostartEnabled().catch(() => false);
+  sw.classList.toggle("on", enabled);
+}
+
+function setupAutostart(): void {
+  $("autostart-switch").addEventListener("click", () => {
+    const enable = !$("autostart-switch").classList.contains("on");
+    $("autostart-switch").classList.toggle("on", enable);
+    void api.autostartSet(enable).catch(() => {});
+  });
 }
 
 /* ============================ dashboard add ============================ */
@@ -748,6 +765,7 @@ function main(): void {
   setupFocusUI();
   setupScheduleUI();
   setupSettingsPage();
+  setupAutostart();
   setupDashboardAdd();
   setupTasksPage({
     onClose: () => closeTasksPage(),

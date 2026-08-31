@@ -63,6 +63,8 @@ export const api = {
 
   getAppIcon: (app: string) => invoke<string | null>("get_app_icon", { app }),
   notifyFocusDone: (title: string) => invoke("notify_focus_done", { title }),
+  autostartEnabled: () => invoke<boolean>("autostart_enabled"),
+  autostartSet: (enable: boolean) => invoke("autostart_set", { enable }),
 
   mediaPlay: () => invoke("media_play"),
   mediaPause: () => invoke("media_pause"),

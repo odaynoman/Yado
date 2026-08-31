@@ -183,6 +183,26 @@ pub fn delete_task(state: State<'_, db::Db>, id: i64) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+// ---------- system ----------
+
+#[tauri::command]
+pub fn autostart_enabled(app: AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn autostart_set(app: AppHandle, enable: bool) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let autostart = app.autolaunch();
+    if enable {
+        autostart.enable()
+    } else {
+        autostart.disable()
+    }
+    .map_err(|e| e.to_string())
+}
+
 // ---------- app icons ----------
 
 #[tauri::command]

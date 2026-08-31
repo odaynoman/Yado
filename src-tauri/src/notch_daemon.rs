@@ -210,6 +210,18 @@ pub fn spawn(app: AppHandle, shared: SharedHandle) {
 
             let over_island = contains(&island, cx, cy);
             let over_pill = contains(&pill, cx, cy);
+            let our_hwnd = win.hwnd().map(|h| h.0 as isize).unwrap_or(0);
+            // Hover trigger band: a thin strip at the very top edge of the
+            // pill, so reaching for app tabs just below it never expands.
+            let top_band = (10.0_f64
+                * win.primary_monitor()
+                    .ok()
+                    .flatten()
+                    .map(|m| m.scale_factor())
+                    .unwrap_or(1.0))
+            .round() as i32;
+            let in_top_band =
+                over_pill && (cy - pill.y) < top_band && (cx - pill.x) >= 0;
 
             // Global left-click edge: pressing outside the expanded island
             // dismisses it (same contract as the pill), routed through the
@@ -243,7 +255,13 @@ pub fn spawn(app: AppHandle, shared: SharedHandle) {
             let mut next = stage;
             match stage {
                 Stage::Compact => {
-                    if over_pill && !block {
+                    // Expand only when the pointer deliberately touches the
+                    // very top edge AND lands on the notch itself — a
+                    // maximized app above the desktop-layer pill is never
+                    // hijacked.
+                    let on_notch =
+                        windows::z_order::window_at_point(cx, cy) == our_hwnd;
+                    if in_top_band && !block && on_notch {
                         let since = *dwell_since.get_or_insert(Instant::now());
                         if since.elapsed() >= OPEN_DWELL {
                             next = Stage::Expanded;

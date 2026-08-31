@@ -87,6 +87,10 @@ pub fn run() {
             }
             notch_daemon::apply_stage(app, Stage::Compact);
         }))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .plugin(notification_plugin())
         .invoke_handler(tauri::generate_handler![
             commands::expand_now,
@@ -106,6 +110,8 @@ pub fn run() {
             commands::delete_task,
             commands::get_app_icon,
             commands::notify_focus_done,
+            commands::autostart_enabled,
+            commands::autostart_set,
             media::media_play,
             media::media_pause,
             media::media_next,
@@ -130,6 +136,15 @@ pub fn run() {
                 }
             }
             std::fs::create_dir_all(&data_dir).expect("failed to create data dir");
+
+            // Launch at login so the notch is always on (user-disableable
+            // from the settings page).
+            {
+                use tauri_plugin_autostart::ManagerExt;
+                if let Err(e) = app.autolaunch().enable() {
+                    eprintln!("[autostart] enable failed: {e}");
+                }
+            }
             let conn = db::init(&data_dir.join("activities.db"))
                 .expect("failed to initialize sqlite database");
             app.manage(db::Db(Mutex::new(conn)));

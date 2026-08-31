@@ -73,60 +73,6 @@ pub mod z_order {
             );
         }
     }
-
-    /// Returns the topmost interactive window at a screen point, walking
-    /// the z-order and skipping invisible/minimized/click-through windows.
-    /// `0` when nothing matches.
-    pub fn window_at_point(x: i32, y: i32) -> isize {
-        #[repr(C)]
-        struct Rect {
-            left: i32,
-            top: i32,
-            right: i32,
-            bottom: i32,
-        }
-
-        const GWL_EXSTYLE: i32 = -20;
-        const WS_EX_TRANSPARENT: i32 = 0x20;
-        const GW_HWNDNEXT: u32 = 2;
-
-        #[link(name = "user32")]
-        extern "system" {
-            fn GetTopWindow(h: isize) -> isize;
-            fn GetWindow(h: isize, cmd: u32) -> isize;
-            fn IsWindowVisible(h: isize) -> i32;
-            fn IsIconic(h: isize) -> i32;
-            fn GetWindowLongW(h: isize, index: i32) -> i32;
-            fn GetWindowRect(h: isize, rect: *mut Rect) -> i32;
-        }
-
-        unsafe {
-            let mut cur = GetTopWindow(0);
-            while cur != 0 {
-                if IsWindowVisible(cur) != 0
-                    && IsIconic(cur) == 0
-                    && (GetWindowLongW(cur, GWL_EXSTYLE) & WS_EX_TRANSPARENT) == 0
-                {
-                    let mut r = Rect {
-                        left: 0,
-                        top: 0,
-                        right: 0,
-                        bottom: 0,
-                    };
-                    if GetWindowRect(cur, &mut r) != 0
-                        && x >= r.left
-                        && x < r.right
-                        && y >= r.top
-                        && y < r.bottom
-                    {
-                        return cur;
-                    }
-                }
-                cur = GetWindow(cur, GW_HWNDNEXT);
-            }
-            0
-        }
-    }
 }
 
 /// Centers the canvas horizontally at the very top of the primary monitor

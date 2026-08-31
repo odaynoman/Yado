@@ -210,18 +210,23 @@ pub fn spawn(app: AppHandle, shared: SharedHandle) {
 
             let over_island = contains(&island, cx, cy);
             let over_pill = contains(&pill, cx, cy);
-            let our_hwnd = win.hwnd().map(|h| h.0 as isize).unwrap_or(0);
-            // Hover trigger band: a thin strip at the very top edge of the
-            // pill, so reaching for app tabs just below it never expands.
-            let top_band = (10.0_f64
-                * win.primary_monitor()
-                    .ok()
-                    .flatten()
-                    .map(|m| m.scale_factor())
-                    .unwrap_or(1.0))
-            .round() as i32;
-            let in_top_band =
-                over_pill && (cy - pill.y) < top_band && (cx - pill.x) >= 0;
+            // Hover trigger: a small strip dead-center at the very top of
+            // the screen. It exists even when a maximized app covers the
+            // pill — but it is tiny, so brushing the top edge to reach app
+            // tabs never expands the notch.
+            let scale = win
+                .primary_monitor()
+                .ok()
+                .flatten()
+                .map(|m| m.scale_factor())
+                .unwrap_or(1.0);
+            let band_w = (150.0 * scale).round() as i32;
+            let band_h = (10.0 * scale).round() as i32;
+            let band_x = pill.x + (pill.w - band_w) / 2;
+            let in_band = cx >= band_x
+                && cx < band_x + band_w
+                && cy >= pill.y
+                && cy < pill.y + band_h;
 
             // Global left-click edge: pressing outside the expanded island
             // dismisses it (same contract as the pill), routed through the
@@ -255,13 +260,7 @@ pub fn spawn(app: AppHandle, shared: SharedHandle) {
             let mut next = stage;
             match stage {
                 Stage::Compact => {
-                    // Expand only when the pointer deliberately touches the
-                    // very top edge AND lands on the notch itself — a
-                    // maximized app above the desktop-layer pill is never
-                    // hijacked.
-                    let on_notch =
-                        windows::z_order::window_at_point(cx, cy) == our_hwnd;
-                    if in_top_band && !block && on_notch {
+                    if in_band && !block {
                         let since = *dwell_since.get_or_insert(Instant::now());
                         if since.elapsed() >= OPEN_DWELL {
                             next = Stage::Expanded;

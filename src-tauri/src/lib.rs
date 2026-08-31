@@ -149,7 +149,6 @@ pub fn run() {
                 .expect("failed to initialize sqlite database");
             app.manage(db::Db(Mutex::new(conn)));
             app_icons::init(&data_dir);
-            app.manage(media::MediaHandle::default());
 
             let shared: SharedHandle = Arc::new(Mutex::new(notch_daemon::Shared {
                 stage: Stage::Compact,
@@ -162,7 +161,11 @@ pub fn run() {
 
             tracker::spawn_focus_tracker(data_dir.clone());
             tracker::spawn_file_watcher(data_dir.clone());
-            media::spawn(app.handle().clone());
+            #[cfg(windows)]
+            {
+                app.manage(media::MediaState::default());
+                media::spawn(app.handle().clone());
+            }
 
             let main = app
                 .get_webview_window("main")

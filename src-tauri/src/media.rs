@@ -1,28 +1,14 @@
-//! Windows system media integration (SMTC).
+//! System media integration.
 //!
-//! Polls the GlobalSystemMediaTransportControlsSessionManager — the same
-//! pipeline the Windows volume flyout uses — so every app that exposes
+//! On Windows this talks to the System Media Transport Controls (SMTC) —
+//! the same pipeline the volume flyout uses — so every app that exposes
 //! system media controls (Spotify, Chrome, players, …) shows up in the
 //! widget with title/artist/app, transport controls and a seekable
-//! timeline.
-
-use std::sync::Mutex;
-use std::time::Duration;
+//! timeline. On other platforms the command surface still exists but
+//! reports "unsupported".
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State};
-use windows::Media::Control::{
-    GlobalSystemMediaTransportControlsSession,
-    GlobalSystemMediaTransportControlsSessionManager,
-    GlobalSystemMediaTransportControlsSessionPlaybackStatus,
-};
-use windows_collections::IVectorView;
-
-const POLL_INTERVAL: Duration = Duration::from_millis(1000);
-
-/// The session the widget is currently bound to; commands act on it.
-#[derive(Default)]
-pub struct MediaHandle(pub Mutex<Option<GlobalSystemMediaTransportControlsSession>>);
+use tauri::State;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,161 +21,270 @@ pub struct MediaInfo {
     pub duration_sec: f64,
 }
 
-fn hstring_str(h: &windows::core::HSTRING) -> String {
-    h.to_string_lossy()
-}
+#[cfg(windows)]
+mod smtc {
+    use super::MediaInfo;
+    use std::sync::Mutex;
+    use std::time::Duration;
+    use tauri::{AppHandle, Emitter, Manager};
+    use windows::Foundation::TimeSpan;
+    use windows::Media::Control::{
+        GlobalSystemMediaTransportControlsSessionManager,
+        GlobalSystemMediaTransportControlsSessionPlaybackStatus,
+    };
+    pub use windows::Media::Control::GlobalSystemMediaTransportControlsSession;
+    use windows_collections::IVectorView;
 
-fn seconds(t: windows::Foundation::TimeSpan) -> f64 {
-    t.Duration as f64 / 10_000_000.0
-}
+    const POLL_INTERVAL: Duration = Duration::from_millis(1000);
 
-/// Blocks on a WinRT async operation (called from the poll thread only).
-fn await_op<T: windows::core::RuntimeType>(
-    op: windows::core::Result<windows_future::IAsyncOperation<T>>,
-) -> Option<T> {
-    op.ok()?.get().ok()
-}
+    /// The session the widget is currently bound to; commands act on it.
+    #[derive(Default)]
+    pub struct MediaHandle(pub Mutex<Option<GlobalSystemMediaTransportControlsSession>>);
 
-/// "Microsoft.ZuneMusic_8wekyb3d8bbwe!App" -> "ZuneMusic"; "chrome" -> "Chrome".
-fn pretty_app(aumid: &str) -> String {
-    let base = aumid.split('!').next().unwrap_or(aumid);
-    let name = base.split('_').next().unwrap_or(base);
-    let leaf = name.rsplit(['.', '\\', '/']).next().unwrap_or(name);
-    let mut chars = leaf.chars();
-    match chars.next() {
-        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
-        None => String::new(),
+    fn hstring_str(h: &windows::core::HSTRING) -> String {
+        h.to_string_lossy()
     }
-}
 
-/// Picks the active session: the playing one if any, else the first.
-fn pick_session(
-    sessions: &IVectorView<GlobalSystemMediaTransportControlsSession>,
-) -> Option<GlobalSystemMediaTransportControlsSession> {
-    let mut fallback = None;
-    for session in sessions {
+    fn seconds(t: TimeSpan) -> f64 {
+        t.Duration as f64 / 10_000_000.0
+    }
+
+    /// "Microsoft.ZuneMusic_8wekyb3d8bbwe!App" -> "ZuneMusic"; "chrome" -> "Chrome".
+    fn pretty_app(aumid: &str) -> String {
+        let base = aumid.split('!').next().unwrap_or(aumid);
+        let name = base.split('_').next().unwrap_or(base);
+        let leaf = name.rsplit(['.', '\\', '/']).next().unwrap_or(name);
+        let mut chars = leaf.chars();
+        match chars.next() {
+            Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+            None => String::new(),
+        }
+    }
+
+    /// Picks the active session: the playing one if any, else the first.
+    fn pick_session(
+        sessions: &IVectorView<GlobalSystemMediaTransportControlsSession>,
+    ) -> Option<GlobalSystemMediaTransportControlsSession> {
+        let mut fallback = None;
+        for session in sessions {
+            let playing = session
+                .GetPlaybackInfo()
+                .ok()
+                .and_then(|info| info.PlaybackStatus().ok())
+                .is_some_and(
+                    |st| st == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing,
+                );
+            if playing {
+                return Some(session);
+            }
+            if fallback.is_none() {
+                fallback = Some(session);
+            }
+        }
+        fallback
+    }
+
+    fn read_info(session: &GlobalSystemMediaTransportControlsSession) -> Option<MediaInfo> {
         let playing = session
             .GetPlaybackInfo()
-            .ok()
-            .and_then(|info| info.PlaybackStatus().ok())
-            .is_some_and(|st| st == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing);
-        if playing {
-            return Some(session);
-        }
-        if fallback.is_none() {
-            fallback = Some(session);
-        }
-    }
-    fallback
-}
+            .ok()?
+            .PlaybackStatus()
+            .ok()?
+            == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing;
 
-fn read_info(
-    session: &GlobalSystemMediaTransportControlsSession,
-) -> Option<MediaInfo> {
-    let playing = session
-        .GetPlaybackInfo()
-        .ok()?
-        .PlaybackStatus()
-        .ok()?
-        == GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing;
+        let props = await_op(session.TryGetMediaPropertiesAsync())?;
+        let app = pretty_app(&hstring_str(&session.SourceAppUserModelId().ok()?));
 
-    let props = await_op(session.TryGetMediaPropertiesAsync())?;
-    let app = pretty_app(&hstring_str(&session.SourceAppUserModelId().ok()?));
-
-    let (position_sec, duration_sec) = match session.GetTimelineProperties() {
-        Ok(t) => (
-            t.Position().map(seconds).unwrap_or(0.0),
-            t.EndTime().map(seconds).unwrap_or(0.0),
-        ),
-        Err(_) => (0.0, 0.0),
-    };
-
-    Some(MediaInfo {
-        title: hstring_str(&props.Title().ok()?),
-        artist: hstring_str(&props.Artist().ok()?),
-        app,
-        playing,
-        position_sec,
-        duration_sec,
-    })
-}
-
-pub fn spawn(app: AppHandle) {
-    std::thread::spawn(move || {
-        let manager = match await_op(GlobalSystemMediaTransportControlsSessionManager::RequestAsync())
-        {
-            Some(m) => m,
-            None => {
-                eprintln!("[media] SMTC unavailable");
-                return;
-            }
+        let (position_sec, duration_sec) = match session.GetTimelineProperties() {
+            Ok(t) => (
+                t.Position().map(seconds).unwrap_or(0.0),
+                t.EndTime().map(seconds).unwrap_or(0.0),
+            ),
+            Err(_) => (0.0, 0.0),
         };
 
-        let mut cached: Option<MediaInfo> = None;
-        loop {
-            std::thread::sleep(POLL_INTERVAL);
+        Some(MediaInfo {
+            title: hstring_str(&props.Title().ok()?),
+            artist: hstring_str(&props.Artist().ok()?),
+            app,
+            playing,
+            position_sec,
+            duration_sec,
+        })
+    }
 
-            let Ok(sessions) = manager.GetSessions() else {
-                continue;
-            };
-            let Some(session) = pick_session(&sessions) else {
-                if cached.is_some() {
-                    cached = None;
-                    let _ = app.emit("media://state", Option::<MediaInfo>::None);
-                    if let Some(handle) = app.try_state::<MediaHandle>() {
-                        *handle.0.lock().unwrap() = None;
+    /// Blocks on a WinRT async operation (called from the poll thread only).
+    pub fn await_op<T: windows::core::RuntimeType>(
+        op: windows::core::Result<windows_future::IAsyncOperation<T>>,
+    ) -> Option<T> {
+        op.ok()?.get().ok()
+    }
+
+    pub fn spawn(app: AppHandle) {
+        std::thread::spawn(move || {
+            let manager =
+                match await_op(GlobalSystemMediaTransportControlsSessionManager::RequestAsync())
+                {
+                    Some(m) => m,
+                    None => {
+                        eprintln!("[media] SMTC unavailable");
+                        return;
                     }
-                }
-                continue;
-            };
+                };
 
-            let Some(info) = read_info(&session) else {
-                continue;
-            };
-            // Round the position so the 1 s poll doesn't re-emit constantly.
-            let mut emit_info = info.clone();
-            emit_info.position_sec = (emit_info.position_sec * 10.0).round() / 10.0;
+            let mut cached: Option<MediaInfo> = None;
+            loop {
+                std::thread::sleep(POLL_INTERVAL);
 
-            if cached.as_ref() != Some(&emit_info) {
-                cached = Some(emit_info);
-                if let Some(handle) = app.try_state::<MediaHandle>() {
-                    *handle.0.lock().unwrap() = Some(session.clone());
+                let Ok(sessions) = manager.GetSessions() else {
+                    continue;
+                };
+                let Some(session) = pick_session(&sessions) else {
+                    if cached.is_some() {
+                        cached = None;
+                        let _ = app.emit("media://state", Option::<MediaInfo>::None);
+                        if let Some(handle) = app.try_state::<MediaHandle>() {
+                            *handle.0.lock().unwrap() = None;
+                        }
+                    }
+                    continue;
+                };
+
+                let Some(info) = read_info(&session) else {
+                    continue;
+                };
+                // Round the position so the 1 s poll doesn't re-emit constantly.
+                let mut emit_info = info.clone();
+                emit_info.position_sec = (emit_info.position_sec * 10.0).round() / 10.0;
+
+                if cached.as_ref() != Some(&emit_info) {
+                    cached = Some(emit_info);
+                    if let Some(handle) = app.try_state::<MediaHandle>() {
+                        *handle.0.lock().unwrap() = Some(session.clone());
+                    }
+                    let _ = app.emit("media://state", Some(info));
                 }
-                let _ = app.emit("media://state", Some(info));
             }
-        }
-    });
+        });
+    }
+
+    pub fn play(session: &GlobalSystemMediaTransportControlsSession) -> Option<()> {
+        await_op(session.TryPlayAsync()).map(|_| ())
+    }
+
+    pub fn pause(session: &GlobalSystemMediaTransportControlsSession) -> Option<()> {
+        await_op(session.TryPauseAsync()).map(|_| ())
+    }
+
+    pub fn next(session: &GlobalSystemMediaTransportControlsSession) -> Option<()> {
+        await_op(session.TrySkipNextAsync()).map(|_| ())
+    }
+
+    pub fn prev(session: &GlobalSystemMediaTransportControlsSession) -> Option<()> {
+        await_op(session.TrySkipPreviousAsync()).map(|_| ())
+    }
+
+    pub fn seek(session: &GlobalSystemMediaTransportControlsSession, position_sec: f64) -> Option<()> {
+        let ticks = (position_sec * 10_000_000.0).round() as i64;
+        await_op(session.TryChangePlaybackPositionAsync(ticks)).map(|_| ())
+    }
+}
+
+#[cfg(windows)]
+pub use smtc::spawn;
+
+/// The managed media state: a WinRT session handle on Windows.
+#[cfg(windows)]
+pub type MediaState = smtc::MediaHandle;
+#[cfg(not(windows))]
+pub struct MediaState;
+
+#[cfg(not(windows))]
+impl Default for MediaState {
+    fn default() -> Self {
+        Self
+    }
 }
 
 fn with_session<R>(
-    state: &State<MediaHandle>,
-    f: impl FnOnce(&GlobalSystemMediaTransportControlsSession) -> Option<R>,
+    state: &State<MediaState>,
+    #[cfg(windows)] f: impl FnOnce(&smtc::GlobalSystemMediaTransportControlsSession) -> Option<R>,
 ) -> Option<R> {
-    let guard = state.0.lock().ok();
-    let session = guard.as_ref()?.as_ref()?;
-    f(session)
+    #[cfg(windows)]
+    {
+        let guard = state.0.lock().ok();
+        let session = guard.as_ref()?.as_ref()?;
+        f(session)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = state;
+        None
+    }
 }
-
-macro_rules! transport_cmd {
-    ($name:ident, $op:path) => {
-        #[tauri::command]
-        pub fn $name(state: State<'_, MediaHandle>) -> Result<(), String> {
-            with_session(&state, |s| await_op($op(s)).map(|_| ()))
-                .ok_or_else(|| "no active media session".into())
-        }
-    };
-}
-
-transport_cmd!(media_play, GlobalSystemMediaTransportControlsSession::TryPlayAsync);
-transport_cmd!(media_pause, GlobalSystemMediaTransportControlsSession::TryPauseAsync);
-transport_cmd!(media_next, GlobalSystemMediaTransportControlsSession::TrySkipNextAsync);
-transport_cmd!(media_prev, GlobalSystemMediaTransportControlsSession::TrySkipPreviousAsync);
 
 #[tauri::command]
-pub fn media_seek(state: State<'_, MediaHandle>, position_sec: f64) -> Result<(), String> {
-    let ticks = (position_sec * 10_000_000.0).round() as i64;
-    with_session(&state, |s| {
-        await_op(s.TryChangePlaybackPositionAsync(ticks)).map(|_| ())
-    })
-    .ok_or_else(|| "no active media session".into())
+pub fn media_play(state: State<'_, MediaState>) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        with_session(&state, smtc::play).ok_or_else(|| "no active media session".into())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = state;
+        Err("media is only supported on Windows".into())
+    }
+}
+
+#[tauri::command]
+pub fn media_pause(state: State<'_, MediaState>) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        with_session(&state, smtc::pause).ok_or_else(|| "no active media session".into())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = state;
+        Err("media is only supported on Windows".into())
+    }
+}
+
+#[tauri::command]
+pub fn media_next(state: State<'_, MediaState>) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        with_session(&state, smtc::next).ok_or_else(|| "no active media session".into())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = state;
+        Err("media is only supported on Windows".into())
+    }
+}
+
+#[tauri::command]
+pub fn media_prev(state: State<'_, MediaState>) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        with_session(&state, smtc::prev).ok_or_else(|| "no active media session".into())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = state;
+        Err("media is only supported on Windows".into())
+    }
+}
+
+#[tauri::command]
+pub fn media_seek(state: State<'_, MediaState>, position_sec: f64) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        with_session(&state, |s| smtc::seek(s, position_sec))
+            .ok_or_else(|| "no active media session".into())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (state, position_sec);
+        Err("media is only supported on Windows".into())
+    }
 }

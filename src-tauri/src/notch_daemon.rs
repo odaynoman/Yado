@@ -22,7 +22,6 @@ const OPEN_DWELL: Duration = Duration::from_millis(180);
 /// Grace period after the cursor leaves before the panel collapses.
 const CLOSE_GRACE: Duration = Duration::from_millis(400);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
-const VK_LBUTTON: i32 = 0x01;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Stage {
@@ -166,6 +165,15 @@ pub fn collapse_now(shared: &SharedHandle, app: &AppHandle) {
 
 pub fn spawn(app: AppHandle, shared: SharedHandle) {
     #[cfg(windows)]
+    spawn_windows(app, shared);
+    #[cfg(not(windows))]
+    let _ = (app, shared);
+}
+
+#[cfg(windows)]
+fn spawn_windows(app: AppHandle, shared: SharedHandle) {
+    const VK_LBUTTON: i32 = 0x01;
+
     #[link(name = "user32")]
     extern "system" {
         fn GetAsyncKeyState(vkey: i32) -> i16;
@@ -308,7 +316,4 @@ pub fn spawn(app: AppHandle, shared: SharedHandle) {
             }
         }
     });
-
-    #[cfg(not(windows))]
-    let _ = (app, shared);
 }

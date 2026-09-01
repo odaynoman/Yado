@@ -1,6 +1,6 @@
 [package]
 name = "yado-notch"
-version = "0.2.3"
+version = "0.2.4"
 description = "Yado Notch — a native-feeling activity notch: tracking, tasks, focus, media"
 authors = ["odaynoman"]
 edition = "2021"

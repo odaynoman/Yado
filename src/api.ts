@@ -61,6 +61,10 @@ export const api = {
     }),
   deleteTask: (id: number) => invoke("delete_task", { id }),
 
+  revealPath: (path: string) => invoke("reveal_path", { path }),
+  startFileDrag: (paths: string[]) =>
+    invoke<string>("start_file_drag", { paths }),
+
   getAppIcon: (app: string) => invoke<string | null>("get_app_icon", { app }),
   notifyFocusDone: (title: string) => invoke("notify_focus_done", { title }),
   autostartEnabled: () => invoke<boolean>("autostart_enabled"),

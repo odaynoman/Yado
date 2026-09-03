@@ -437,6 +437,83 @@ button.chip.overdue:hover {
   transition: width 1s linear;
 }
 
+/* ================= shelf card ================= */
+
+.shelf-card {
+  flex-shrink: 0;
+}
+
+.shelf-items {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  min-height: 0;
+  padding-bottom: 2px;
+}
+
+.shelf-tile {
+  width: 68px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 4px;
+  background: var(--card-2);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  position: relative;
+  cursor: grab;
+  transition: border-color 0.12s ease, transform 0.12s ease;
+}
+
+.shelf-tile:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+  transform: translateY(-1px);
+}
+
+.shelf-tile:active {
+  cursor: grabbing;
+}
+
+.shelf-art {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.shelf-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.shelf-name {
+  font-size: 8.5px;
+  color: var(--text-dim);
+  max-width: 58px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.shelf-tile .task-del {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 14px;
+  height: 14px;
+  border-radius: 5px;
+}
+
 /* ================= media bar (dashboard bottom strip) ================= */
 
 .media-bar {

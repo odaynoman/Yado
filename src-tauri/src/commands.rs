@@ -203,6 +203,95 @@ pub fn autostart_set(app: AppHandle, enable: bool) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+// ---------- shelf ----------
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct ShelfItem {
+    pub path: String,
+    pub name: String,
+    pub added_at: u64,
+}
+
+fn shelf_file(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    Ok(dir.join("shelf.json"))
+}
+
+#[tauri::command]
+pub fn shelf_load(app: AppHandle) -> Result<Vec<ShelfItem>, String> {
+    let path = shelf_file(&app)?;
+    match std::fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str(&text).map_err(|e| e.to_string()),
+        Err(_) => Ok(Vec::new()),
+    }
+}
+
+#[tauri::command]
+pub fn shelf_save(app: AppHandle, items: Vec<ShelfItem>) -> Result<(), String> {
+    let path = shelf_file(&app)?;
+    let json = serde_json::to_string_pretty(&items).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| e.to_string())
+}
+
+/// Reveals a path in the system file manager (selects it on Windows).
+#[tauri::command]
+pub fn reveal_path(path: String) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        std::process::Command::new("explorer")
+            .arg("/select,")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("-R")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let _ = path;
+        Err("unsupported platform".into())
+    }
+}
+
+/// Starts a native OS drag of the given paths (blocks until drop/cancel).
+/// Runs on a dedicated thread: OLE needs a fresh STA COM apartment, and
+/// reusing pool threads silently fails when another task initialized COM
+/// differently. Returns the effect the target chose: "move" | "copy" | "link" | "none".
+#[tauri::command]
+pub async fn start_file_drag(paths: Vec<String>) -> Result<String, String> {
+    #[cfg(windows)]
+    {
+        if paths.is_empty() {
+            return Err("no files to drag".into());
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = crate::shelf_drag::do_file_drag(&paths).map(|effect| match effect {
+                crate::shelf_drag::DragEffect::Move => "move".into(),
+                crate::shelf_drag::DragEffect::Copy => "copy".into(),
+                crate::shelf_drag::DragEffect::Link => "link".into(),
+                crate::shelf_drag::DragEffect::None => "none".into(),
+            });
+            eprintln!("[shelf] drag-out finished: {result:?}");
+            let _ = tx.send(result);
+        });
+        rx.recv().map_err(|e| e.to_string())?
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = paths;
+        Err("drag-out is only supported on Windows".into())
+    }
+}
+
 // ---------- app icons ----------
 
 #[tauri::command]

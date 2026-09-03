@@ -218,20 +218,26 @@ fn spawn_windows(app: AppHandle, shared: SharedHandle) {
 
             let over_island = contains(&island, cx, cy);
             let over_pill = contains(&pill, cx, cy);
-            // Hover trigger: a small strip dead-center at the very top of
-            // the screen. It exists even when a maximized app covers the
-            // pill — but it is tiny, so brushing the top edge to reach app
-            // tabs never expands the notch.
+            let our_hwnd = win.hwnd().map(|h| h.0 as isize).unwrap_or(0);
             let scale = win
                 .primary_monitor()
                 .ok()
                 .flatten()
                 .map(|m| m.scale_factor())
                 .unwrap_or(1.0);
+
+            // Hover zones (compact):
+            // - pill exposed -> the whole pill is the trigger (desktop use)
+            // - pill covered -> a small strip at the very top-center stays
+            //   alive above the covering app, so the notch is still
+            //   reachable without hijacking the app's own top area.
+            let pill_exposed =
+                over_pill && windows::z_order::window_at_point(cx, cy) == our_hwnd;
             let band_w = (150.0 * scale).round() as i32;
             let band_h = (10.0 * scale).round() as i32;
             let band_x = pill.x + (pill.w - band_w) / 2;
-            let in_band = cx >= band_x
+            let small_band = over_pill
+                && cx >= band_x
                 && cx < band_x + band_w
                 && cy >= pill.y
                 && cy < pill.y + band_h;
@@ -268,7 +274,11 @@ fn spawn_windows(app: AppHandle, shared: SharedHandle) {
             let mut next = stage;
             match stage {
                 Stage::Compact => {
-                    if in_band && !block {
+                    // Dual hover zones: the exposed pill expands from
+                    // anywhere on it; when an app covers the notch, only
+                    // the small top-center strip stays alive.
+                    let trigger = if pill_exposed { over_pill } else { small_band };
+                    if trigger && !block {
                         let since = *dwell_since.get_or_insert(Instant::now());
                         if since.elapsed() >= OPEN_DWELL {
                             next = Stage::Expanded;

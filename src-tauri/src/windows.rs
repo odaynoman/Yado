@@ -74,10 +74,10 @@ pub mod z_order {
         }
     }
 
-    /// Returns the topmost interactive window at a screen point, walking
-    /// the z-order and skipping invisible/minimized/click-through windows.
-    /// `0` when nothing matches.
-    pub fn window_at_point(x: i32, y: i32) -> isize {
+    /// Whether any OTHER interactive window sits above `our` at the point.
+    /// Our own window never counts — regardless of its click-through
+    /// state — so the check has no race with ignore-cursor toggling.
+    pub fn point_covered_by_other(x: i32, y: i32, our: isize) -> bool {
         #[repr(C)]
         struct Rect {
             left: i32,
@@ -103,6 +103,9 @@ pub mod z_order {
         unsafe {
             let mut cur = GetTopWindow(0);
             while cur != 0 {
+                if cur == our {
+                    return false;
+                }
                 if IsWindowVisible(cur) != 0
                     && IsIconic(cur) == 0
                     && (GetWindowLongW(cur, GWL_EXSTYLE) & WS_EX_TRANSPARENT) == 0
@@ -119,12 +122,12 @@ pub mod z_order {
                         && y >= r.top
                         && y < r.bottom
                     {
-                        return cur;
+                        return true;
                     }
                 }
                 cur = GetWindow(cur, GW_HWNDNEXT);
             }
-            0
+            false
         }
     }
 }

@@ -16,8 +16,9 @@ use windows::Win32::Foundation::{
     DRAGDROP_S_CANCEL, DRAGDROP_S_DROP, DRAGDROP_S_USEDEFAULTCURSORS, S_OK,
 };
 use windows::Win32::System::Com::{
-    CoInitializeEx, CoTaskMemFree, IDataObject, COINIT_APARTMENTTHREADED,
+    CoTaskMemFree, IDataObject,
 };
+use windows::Win32::System::Ole::OleInitialize;
 use windows::Win32::System::Ole::{
     DoDragDrop, IDropSource, IDropSource_Impl, DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_LINK,
     DROPEFFECT_MOVE,
@@ -41,10 +42,11 @@ pub fn do_file_drag(paths: &[String]) -> Result<DragEffect, String> {
         return Err("no files to drag".into());
     }
     unsafe {
-        // OLE requires an STA thread for DoDragDrop.
-        CoInitializeEx(None, COINIT_APARTMENTTHREADED)
-            .ok()
-            .map_err(|e| format!("CoInitializeEx: {e}"))?;
+        // OleInitialize (not just CoInitializeEx): it additionally arms
+        // OLE's drag-drop/clipboard machinery on this STA thread.
+        let hr = OleInitialize(None);
+        eprintln!("[shelf] OleInitialize -> {hr:?}");
+        hr.map_err(|e| format!("OleInitialize: {e}"))?;
 
         let result = run_drag(paths);
         eprintln!("[shelf] drag loop done: {result:?}");
@@ -124,31 +126,42 @@ unsafe fn create_hdrop_data_object(paths: &[String]) -> Result<IDataObject, Stri
 #[implement(IDropSource)]
 struct DropSource {
     start: Instant,
+    calls: std::sync::atomic::AtomicU32,
 }
 
 impl Default for DropSource {
     fn default() -> Self {
         Self {
             start: Instant::now(),
+            calls: std::sync::atomic::AtomicU32::new(0),
         }
     }
 }
 
 impl IDropSource_Impl for DropSource_Impl {
     fn QueryContinueDrag(&self, fescapepressed: BOOL, grfkeystate: MODIFIERKEYS_FLAGS) -> HRESULT {
+        let n = self
+            .calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if fescapepressed.as_bool() {
+            eprintln!("[shelf] QueryContinueDrag #{n}: escape -> cancel");
             return DRAGDROP_S_CANCEL;
         }
         // Mouse released (and the press had time to register): drop.
         if !grfkeystate.contains(MODIFIERKEYS_FLAGS(1u32))
             && self.start.elapsed() > std::time::Duration::from_millis(250)
         {
+            eprintln!("[shelf] QueryContinueDrag #{n}: released -> drop");
             return DRAGDROP_S_DROP;
+        }
+        if n < 3 {
+            eprintln!("[shelf] QueryContinueDrag #{n}: continue");
         }
         S_OK
     }
 
-    fn GiveFeedback(&self, _effect: DROPEFFECT) -> HRESULT {
+    fn GiveFeedback(&self, effect: DROPEFFECT) -> HRESULT {
+        eprintln!("[shelf] GiveFeedback: {effect:?}");
         DRAGDROP_S_USEDEFAULTCURSORS
     }
 }

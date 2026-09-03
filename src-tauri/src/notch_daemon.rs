@@ -183,6 +183,7 @@ fn spawn_windows(app: AppHandle, shared: SharedHandle) {
         let mut dwell_since: Option<Instant> = None;
         let mut outside_since: Option<Instant> = None;
         let mut block_dwell = false;
+        let mut block_pos: Option<(i32, i32)> = None;
         let mut ignore = true;
         let mut prev_left_down = false;
 
@@ -231,8 +232,11 @@ fn spawn_windows(app: AppHandle, shared: SharedHandle) {
             // - pill covered -> a small strip at the very top-center stays
             //   alive above the covering app, so the notch is still
             //   reachable without hijacking the app's own top area.
+            // Exposure ignores our own click-through state (we walk past
+            // ourselves by identity), so there is no race with the
+            // ignore-cursor flag.
             let pill_exposed =
-                over_pill && windows::z_order::window_at_point(cx, cy) == our_hwnd;
+                over_pill && !windows::z_order::point_covered_by_other(cx, cy, our_hwnd);
             let band_w = (150.0 * scale).round() as i32;
             let band_h = (10.0 * scale).round() as i32;
             let band_x = pill.x + (pill.w - band_w) / 2;
@@ -260,15 +264,24 @@ fn spawn_windows(app: AppHandle, shared: SharedHandle) {
                     dwell_since = None;
                     outside_since = None;
                     block_dwell = true;
+                    block_pos = Some((cx, cy));
                     continue;
                 }
             }
 
-            // Consume one-shot collapse requests: re-arm the hover dwell
-            // only after the pointer has left the pill.
-            let mut block = block_dwell || collapse_requested;
-            if block && !over_pill {
-                block = false;
+            // Dwell re-arming: after any collapse, hover is blocked until
+            // the cursor travels away from where it collapsed. Distance,
+            // not rectangles — a covered pill holds the cursor inside the
+            // pill's coordinates forever, which a rect check can never see.
+            if block_dwell {
+                if let Some((bx, by)) = block_pos {
+                    if (cx - bx).abs() + (cy - by).abs() > 48 {
+                        block_dwell = false;
+                        block_pos = None;
+                    }
+                } else {
+                    block_dwell = false;
+                }
             }
 
             let mut next = stage;
@@ -278,7 +291,7 @@ fn spawn_windows(app: AppHandle, shared: SharedHandle) {
                     // anywhere on it; when an app covers the notch, only
                     // the small top-center strip stays alive.
                     let trigger = if pill_exposed { over_pill } else { small_band };
-                    if trigger && !block {
+                    if trigger && !block_dwell {
                         let since = *dwell_since.get_or_insert(Instant::now());
                         if since.elapsed() >= OPEN_DWELL {
                             next = Stage::Expanded;
@@ -308,10 +321,13 @@ fn spawn_windows(app: AppHandle, shared: SharedHandle) {
                 if next != stage {
                     apply_stage(&app, next);
                 }
+                if next == Stage::Compact {
+                    block_dwell = true;
+                    block_pos = Some((cx, cy));
+                }
                 dwell_since = None;
                 outside_since = None;
             }
-            block_dwell = block && next == Stage::Compact;
 
             // Click-through: only the visible island receives the pointer.
             let want_ignore = if next == Stage::Expanded {

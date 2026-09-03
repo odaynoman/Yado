@@ -183,6 +183,7 @@ fn spawn_windows(app: AppHandle, shared: SharedHandle) {
         let mut dwell_since: Option<Instant> = None;
         let mut outside_since: Option<Instant> = None;
         let mut block_dwell = false;
+        let mut block_since: Option<Instant> = None;
         let mut ignore = true;
         let mut prev_left_down = false;
 
@@ -218,23 +219,24 @@ fn spawn_windows(app: AppHandle, shared: SharedHandle) {
 
             let over_island = contains(&island, cx, cy);
             let over_pill = contains(&pill, cx, cy);
-            // Hover trigger: a small strip dead-center at the very top of
-            // the screen. It exists even when a maximized app covers the
-            // pill — but it is tiny, so brushing the top edge to reach app
-            // tabs never expands the notch.
+
+            // Hover zone (compact): the pill plus a margin around it, so
+            // touching any edge of the notch triggers expansion — no need
+            // for pixel-perfect aim at the top of the screen.
             let scale = win
                 .primary_monitor()
                 .ok()
                 .flatten()
                 .map(|m| m.scale_factor())
                 .unwrap_or(1.0);
-            let band_w = (150.0 * scale).round() as i32;
-            let band_h = (10.0 * scale).round() as i32;
-            let band_x = pill.x + (pill.w - band_w) / 2;
-            let in_band = cx >= band_x
-                && cx < band_x + band_w
-                && cy >= pill.y
-                && cy < pill.y + band_h;
+            let hover_margin = (20.0_f64 * scale).round() as i32;
+            let hover_zone = Rect {
+                x: pill.x - hover_margin,
+                y: pill.y,
+                w: pill.w + hover_margin * 2,
+                h: pill.h + hover_margin,
+            };
+            let over_hover_zone = contains(&hover_zone, cx, cy);
 
             // Global left-click edge: pressing outside the expanded island
             // dismisses it (same contract as the pill), routed through the
@@ -254,21 +256,29 @@ fn spawn_windows(app: AppHandle, shared: SharedHandle) {
                     dwell_since = None;
                     outside_since = None;
                     block_dwell = true;
+                    block_since = Some(Instant::now());
                     continue;
                 }
             }
 
-            // Consume one-shot collapse requests: re-arm the hover dwell
-            // only after the pointer has left the pill.
-            let mut block = block_dwell || collapse_requested;
-            if block && !over_pill {
-                block = false;
+            // Dwell re-arm: after any collapse, hover is blocked briefly
+            // (2 s timeout) so the close action doesn't instantly re-expand.
+            let block = block_dwell || collapse_requested;
+            if block_dwell {
+                if let Some(armed_at) = block_since {
+                    if armed_at.elapsed() >= Duration::from_secs(2) {
+                        block_dwell = false;
+                        block_since = None;
+                    }
+                } else {
+                    block_dwell = false;
+                }
             }
 
             let mut next = stage;
             match stage {
                 Stage::Compact => {
-                    if in_band && !block {
+                    if over_hover_zone && !block {
                         let since = *dwell_since.get_or_insert(Instant::now());
                         if since.elapsed() >= OPEN_DWELL {
                             next = Stage::Expanded;
@@ -301,7 +311,6 @@ fn spawn_windows(app: AppHandle, shared: SharedHandle) {
                 dwell_since = None;
                 outside_since = None;
             }
-            block_dwell = block && next == Stage::Compact;
 
             // Click-through: only the visible island receives the pointer.
             let want_ignore = if next == Stage::Expanded {

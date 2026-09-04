@@ -49,6 +49,18 @@
           </header>
 
           <div class="view" id="main-view">
+            <section class="card shelf-card" id="shelf-card" hidden>
+              <div class="card-head">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/>
+                </svg>
+                <span class="card-label">Shelf</span>
+                <span class="card-value" id="shelf-count">0</span>
+              </div>
+              <div class="shelf-items" id="shelf-items"></div>
+              <span class="empty" id="shelf-hint" hidden>Drop files on the notch to stash them here — then drag them out anywhere</span>
+            </section>
+
             <div class="cols">
               <section class="card todo-card">
                 <div class="card-head">

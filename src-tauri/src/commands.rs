@@ -203,6 +203,149 @@ pub fn autostart_set(app: AppHandle, enable: bool) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+// ---------- shelf ----------
+
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+pub struct ShelfItem {
+    pub path: String,
+    pub name: String,
+    pub added_at: u64,
+}
+
+fn shelf_file(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    Ok(dir.join("shelf.json"))
+}
+
+#[tauri::command]
+pub fn shelf_load(app: AppHandle) -> Result<Vec<ShelfItem>, String> {
+    let path = shelf_file(&app)?;
+    match std::fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str(&text).map_err(|e| e.to_string()),
+        Err(_) => Ok(Vec::new()),
+    }
+}
+
+#[tauri::command]
+pub fn shelf_save(app: AppHandle, items: Vec<ShelfItem>) -> Result<(), String> {
+    let path = shelf_file(&app)?;
+    let json = serde_json::to_string_pretty(&items).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| e.to_string())
+}
+
+/// Reveals a path in the system file manager (selects it on Windows).
+#[tauri::command]
+pub fn reveal_path(path: String) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        std::process::Command::new("explorer")
+            .arg("/select,")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("-R")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let _ = path;
+        Err("unsupported platform".into())
+    }
+}
+
+/// Starts a native OS drag of the given paths (blocks until the user
+/// drops or cancels). Runs the drag crate's proven modal loop on a
+/// blocking thread; items stay on the shelf regardless of the outcome.
+#[tauri::command]
+pub async fn start_file_drag(app: AppHandle, paths: Vec<String>) -> Result<String, String> {
+    if paths.is_empty() {
+        return Err("no files to drag".into());
+    }
+    let Some(win) = app.get_webview_window("main") else {
+        return Err("window not found".into());
+    };
+    #[cfg(windows)]
+    let Ok(hwnd) = win.hwnd() else {
+        return Err("no window handle".into());
+    };
+    #[cfg(windows)]
+    let hwnd_raw = hwnd.0 as isize;
+    let items: Vec<std::path::PathBuf> = paths.iter().map(std::path::PathBuf::from).collect();
+    let preview = drag_preview_png();
+    tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(windows)]
+        {
+            use std::num::NonZero;
+            let raw = NonZero::new(hwnd_raw).ok_or("null window handle")?;
+            let handle =
+                NotchWindowHandle(raw_window_handle::Win32WindowHandle::new(raw));
+            let _ = drag::start_drag(
+                &handle,
+                drag::DragItem::Files(items),
+                drag::Image::File(preview),
+                |result, _cursor| {
+                    eprintln!("[shelf] drag finished: {result:?}");
+                },
+                drag::Options::default(),
+            );
+        }
+        Ok::<String, String>("copy".into())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Minimal window-handle wrapper: the drag crate only needs the raw
+/// HWND, which Tauri exposes via `hwnd()`.
+#[cfg(windows)]
+#[derive(Clone, Copy)]
+struct NotchWindowHandle(raw_window_handle::Win32WindowHandle);
+
+#[cfg(windows)]
+unsafe impl Send for NotchWindowHandle {}
+
+#[cfg(windows)]
+unsafe impl Sync for NotchWindowHandle {}
+
+#[cfg(windows)]
+impl raw_window_handle::HasWindowHandle for NotchWindowHandle {
+    fn window_handle(
+        &self,
+    ) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
+        Ok(unsafe { raw_window_handle::WindowHandle::borrow_raw(self.0.clone().into()) })
+    }
+}
+
+/// 64px drag-preview tile (solid card + accent border), cached in temp.
+fn drag_preview_png() -> std::path::PathBuf {
+    let mut out = std::env::temp_dir();
+    out.push("yado-notch-drag-preview.png");
+    if !out.exists() {
+        let mut img = image::RgbaImage::from_pixel(64, 64, image::Rgba([27, 30, 36, 255]));
+        let accent = image::Rgba([59, 123, 255, 255]);
+        for x in 0..64 {
+            for y in [0, 1, 62, 63] {
+                img.put_pixel(x, y, accent);
+            }
+        }
+        for y in 0..64 {
+            for x in [0, 1, 62, 63] {
+                img.put_pixel(x, y, accent);
+            }
+        }
+        let _ = img.save(&out);
+    }
+    out
+}
+
 // ---------- app icons ----------
 
 #[tauri::command]

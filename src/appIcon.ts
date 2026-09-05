@@ -17,7 +17,8 @@ export function appIconUrl(app: string): Promise<string | null> {
   return promise;
 }
 
-/** Fills an <img>-like element with the app icon, falling back to a glyph. */
+/** Fills an <img>-like element with the app icon, falling back to a glyph.
+ *  A broken image never reaches the DOM: load errors revert to the glyph. */
 export function applyAppIcon(
   target: HTMLElement,
   app: string,
@@ -29,11 +30,17 @@ export function applyAppIcon(
       const img = document.createElement("img");
       img.src = url;
       img.alt = "";
+      img.onerror = () => {
+        target.innerHTML = glyph;
+        target.classList.remove("has-img");
+      };
+      img.onload = () => target.classList.add("has-img");
       target.replaceChildren(img);
       target.classList.add("has-img");
     } else {
       target.innerHTML = glyph;
+      target.classList.remove("has-img");
+      target.classList.remove("icon-loading");
     }
-    target.classList.remove("icon-loading");
   });
 }

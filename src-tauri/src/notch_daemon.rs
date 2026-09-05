@@ -19,6 +19,11 @@ use crate::windows::{self, PILL_SIZE};
 
 /// Hover dwell before the pill expands.
 const OPEN_DWELL: Duration = Duration::from_millis(180);
+/// Dwell before the top strip expands while a fullscreen app covers the
+/// notch. Deliberately longer: a cursor crossing those pixels is usually
+/// aiming at the app's own top UI (tab bars live there), while opening
+/// the notch means parking.
+const COVERED_DWELL: Duration = Duration::from_millis(600);
 /// Grace period after the cursor leaves before the panel collapses.
 const CLOSE_GRACE: Duration = Duration::from_millis(400);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
@@ -183,6 +188,7 @@ fn spawn_windows(app: AppHandle, shared: SharedHandle) {
         let mut dwell_since: Option<Instant> = None;
         let mut outside_since: Option<Instant> = None;
         let mut block_dwell = false;
+        let mut block_since: Option<Instant> = None;
         let mut ignore = true;
         let mut prev_left_down = false;
 
@@ -218,6 +224,35 @@ fn spawn_windows(app: AppHandle, shared: SharedHandle) {
 
             let over_island = contains(&island, cx, cy);
             let over_pill = contains(&pill, cx, cy);
+            let our_hwnd = win.hwnd().map(|h| h.0 as isize).unwrap_or(0);
+
+            // Hover zones (compact):
+            // - pill exposed -> the pill + a small margin triggers
+            // - pill covered -> only a small strip at the very top-center
+            let scale = win
+                .primary_monitor()
+                .ok()
+                .flatten()
+                .map(|m| m.scale_factor())
+                .unwrap_or(1.0);
+            let hover_margin = (20.0_f64 * scale).round() as i32;
+            let hover_zone = Rect {
+                x: pill.x - hover_margin,
+                y: pill.y,
+                w: pill.w + hover_margin * 2,
+                h: pill.h + hover_margin,
+            };
+            let over_hover_zone = contains(&hover_zone, cx, cy);
+            let covered =
+                over_pill && windows::z_order::point_covered_by_other(cx, cy, our_hwnd);
+            let band_w = (150.0_f64 * scale).round() as i32;
+            let band_h = (10.0_f64 * scale).round() as i32;
+            let band_x = pill.x + (pill.w - band_w) / 2;
+            let in_band = over_pill
+                && cx >= band_x
+                && cx < band_x + band_w
+                && cy >= pill.y
+                && cy < pill.y + band_h;
 
             // Global left-click edge: pressing outside the expanded island
             // dismisses it (same contract as the pill), routed through the
@@ -237,23 +272,36 @@ fn spawn_windows(app: AppHandle, shared: SharedHandle) {
                     dwell_since = None;
                     outside_since = None;
                     block_dwell = true;
+                    block_since = Some(Instant::now());
                     continue;
                 }
             }
 
-            // Consume one-shot collapse requests: re-arm the hover dwell
-            // only after the pointer has left the pill.
-            let mut block = block_dwell || collapse_requested;
-            if block && !over_pill {
-                block = false;
+            // Dwell re-arm: after any collapse, hover is blocked briefly
+            // (2 s timeout) so the close action doesn't instantly re-expand.
+            let block = block_dwell || collapse_requested;
+            if block_dwell {
+                if let Some(armed_at) = block_since {
+                    if armed_at.elapsed() >= Duration::from_secs(2) {
+                        block_dwell = false;
+                        block_since = None;
+                    }
+                } else {
+                    block_dwell = false;
+                }
             }
 
             let mut next = stage;
             match stage {
                 Stage::Compact => {
-                    if over_pill && !block {
+                    // Dual zones: exposed pill = full area; covered pill =
+                    // small top-center strip only, so we never hijack the
+                    // app's own top area.
+                    let trigger = if covered { in_band } else { over_hover_zone };
+                    let dwell = if covered { COVERED_DWELL } else { OPEN_DWELL };
+                    if trigger && !block {
                         let since = *dwell_since.get_or_insert(Instant::now());
-                        if since.elapsed() >= OPEN_DWELL {
+                        if since.elapsed() >= dwell {
                             next = Stage::Expanded;
                         }
                     } else {
@@ -284,13 +332,15 @@ fn spawn_windows(app: AppHandle, shared: SharedHandle) {
                 dwell_since = None;
                 outside_since = None;
             }
-            block_dwell = block && next == Stage::Compact;
 
             // Click-through: only the visible island receives the pointer.
+            // A covered pill stays click-through so clicks reach the
+            // fullscreen app beneath (its tab bar lives under these very
+            // pixels); the strip still expands by hover position.
             let want_ignore = if next == Stage::Expanded {
                 !over_island
             } else {
-                !over_pill
+                covered || !over_pill
             };
             if want_ignore != ignore
                 && win.set_ignore_cursor_events(want_ignore).is_ok()

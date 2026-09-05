@@ -1,4 +1,4 @@
-﻿import { listen } from "@tauri-apps/api/event";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { api } from "./api";
 import { ICONS } from "./icons";
@@ -15,7 +15,6 @@ import {
 } from "./tasksStore";
 import {
   getShelf,
-  loadShelf,
   shelfAdd,
   shelfRemove,
   subscribeShelf,
@@ -31,7 +30,7 @@ const DONE_FLASH_MS = 5000;
 const STATS_POLL_MS = 30_000;
 const CLOCK_POLL_MS = 1000;
 
-/** Island sizes per stage â€” mirrored in notch_daemon for hit-testing. */
+/** Island sizes per stage — mirrored in notch_daemon for hit-testing. */
 const ISLAND_PILL: [number, number] = [340, 44];
 const ISLAND_DASHBOARD: [number, number] = [600, 340];
 const ISLAND_PAGE: [number, number] = [600, 460];
@@ -53,7 +52,7 @@ function fmtClock(totalSec: number): string {
 
 /* ============================ heatmap (rolling window) ============================ */
 
-/** 12 columns x 3 rows = 36 days ending today. Every cell is a real day â€”
+/** 12 columns x 3 rows = 36 days ending today. Every cell is a real day —
  *  days from the previous month fill the start naturally, so the grid is
  *  always full and the last cell is always today. */
 const HEATMAP_COLS = 12;
@@ -100,7 +99,7 @@ async function refreshStats(): Promise<void> {
       const count = counts.get(date) ?? 0;
       el.dataset.level = String(levelFor(count, max));
       const d = new Date(`${date}T12:00:00`);
-       el.title = `${d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} Â· ${count} event${count === 1 ? "" : "s"}`;
+       el.title = `${d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })} · ${count} event${count === 1 ? "" : "s"}`;
     }
     renderPill();
   } catch {
@@ -149,7 +148,7 @@ function previewRow(t: Task): HTMLElement {
   return row;
 }
 
-/** Renders the preview purely from the store â€” no fetching here. */
+/** Renders the preview purely from the store — no fetching here. */
 function renderTaskPreview(): void {
   const tasks = getTasks().filter((t) => !t.done);
   const list = $("task-preview");
@@ -424,128 +423,6 @@ function syncIslandSize(): void {
   void api.setIslandSize(w, h);
 }
 
-/* ============================ file shelf ============================ */
-
-let dragOverShelf = false;
-
-function renderShelf(): void {
-  const items = getShelf();
-  const card = $("shelf-card");
-  card.hidden = items.length === 0 && !dragOverShelf;
-  $("shelf-count").textContent = String(items.length);
-
-  const wrap = $("shelf-items");
-  wrap.innerHTML = "";
-  if (!items.length) {
-    wrap.innerHTML =
-      '<span class="empty">Drop files on the notch to stash them here</span>';
-  } else {
-    for (const it of items) wrap.appendChild(shelfTile(it));
-  }
-  syncIslandSize();
-}
-
-function shelfTile(it: ShelfItem): HTMLElement {
-  const tile = document.createElement("div");
-  tile.className = "shelf-tile";
-  tile.title = it.path;
-
-  const art = document.createElement("div");
-  art.className = "shelf-art";
-  art.textContent = shelfGlyph(it.name);
-
-  const name = document.createElement("span");
-  name.className = "shelf-name";
-  name.textContent = it.name;
-
-  const del = document.createElement("button");
-  del.className = "task-del";
-  del.title = "Remove from shelf";
-  del.innerHTML = ICONS.trash;
-  del.addEventListener("click", (e) => {
-    e.stopPropagation();
-    shelfRemove(it.path);
-  });
-
-  // Drag-out gesture: press + move beyond 8px starts a native OS drag
-  // (via tauri-plugin-drag) carrying the file path.
-  tile.addEventListener("pointerdown", (e) => {
-    if (e.button !== 0) return;
-    const startX = e.clientX;
-    const startY = e.clientY;
-    let started = false;
-    const onMove = (ev: PointerEvent): void => {
-      if (started) return;
-      if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > 8) {
-        started = true;
-        window.removeEventListener("pointermove", onMove);
-        window.removeEventListener("pointerup", onUp);
-        void beginShelfDrag(it);
-      }
-    };
-    const onUp = (): void => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-  });
-
-  tile.addEventListener("dblclick", () => void api.revealPath(it.path));
-  tile.append(art, name, del);
-  return tile;
-}
-
-function shelfGlyph(name: string): string {
-  const ext = name.split(".").pop()?.toLowerCase() ?? "";
-  if (["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"].includes(ext)) return "ðŸ–¼";
-  if (["zip", "rar", "7z", "tar", "gz"].includes(ext)) return "ðŸ—œ";
-  if (["pdf"].includes(ext)) return "ðŸ“•";
-  if (["doc", "docx", "txt", "md", "rtf"].includes(ext)) return "ðŸ“";
-  if (["mp4", "mkv", "mov", "avi"].includes(ext)) return "ðŸŽ¬";
-  if (["mp3", "wav", "flac", "aac"].includes(ext)) return "ðŸŽµ";
-  return "ðŸ“Ž";
-}
-
-/** Begins a native OS drag carrying the shelf item (blocks until drop).
- *  A "move" result removes the item from the shelf, tray-style. */
-async function beginShelfDrag(it: ShelfItem): Promise<void> {
-  setPin(true);
-  try {
-    const effect = await api.startFileDrag([it.path]);
-    if (effect === "move") shelfRemove(it.path);
-  } catch {
-    // drag cancelled or unsupported
-  }
-  setPin(false);
-}
-
-function setupShelf(): void {
-  subscribeShelf(renderShelf);
-
-  // Drag-in: the OS reports drops on the window; add every path.
-  void getCurrentWebviewWindow().onDragDropEvent((event) => {
-    const type = event.payload.type;
-    if (type === "enter" || type === "over") {
-      dragOverShelf = true;
-      if ($("island").dataset.stage !== "expanded") void api.expandNow();
-      renderShelf();
-      $("island").dataset.drop = "1";
-    } else if (type === "leave") {
-      dragOverShelf = false;
-      $("island").dataset.drop = "";
-      renderShelf();
-    } else if (type === "drop") {
-      dragOverShelf = false;
-      $("island").dataset.drop = "";
-      for (const p of event.payload.paths) shelfAdd(p);
-      renderShelf();
-    }
-  });
-
-  void loadShelf();
-}
-
 /** The backend daemon owns the stage; we only render it. */
 function setupStageListener(): void {
   void listen<{ stage: "compact" | "expanded" | "hidden" }>("notch://stage", ({ payload }) => {
@@ -627,7 +504,7 @@ function appSwitch(enabled: boolean, onToggle: () => void): HTMLButtonElement {
   return sw;
 }
 
-/** Tracking list: icon Â· name Â· count Â· per-app switch. */
+/** Tracking list: icon · name · count · per-app switch. */
 function renderAppList(recent: AppCount[]): void {
   const wrap = $("app-list");
   wrap.innerHTML = "";
@@ -884,6 +761,128 @@ interface ScheduleRequest {
 /** Due-date changes bypass the generic patch: the popover owns the field. */
 function storeUpdateTaskDue(id: number, due_date: string | null): Promise<void> {
   return storeUpdateTask(id, { due_date });
+}
+
+/* ============================ file shelf ============================ */
+
+let dragOverShelf = false;
+
+function renderShelf(): void {
+  const items = getShelf();
+  const card = $("shelf-card");
+  card.hidden = items.length === 0 && !dragOverShelf;
+  $("shelf-count").textContent = String(items.length);
+
+  const wrap = $("shelf-items");
+  wrap.innerHTML = "";
+  if (!items.length) {
+    wrap.innerHTML =
+      '<span class="empty">Drop files on the notch to stash them here</span>';
+  } else {
+    for (const it of items) wrap.appendChild(shelfTile(it));
+  }
+  syncIslandSize();
+}
+
+function shelfTile(it: ShelfItem): HTMLElement {
+  const tile = document.createElement("div");
+  tile.className = "shelf-tile";
+  tile.title = it.path;
+
+  const art = document.createElement("div");
+  art.className = "shelf-art";
+  art.textContent = shelfGlyph(it.name);
+
+  const name = document.createElement("span");
+  name.className = "shelf-name";
+  name.textContent = it.name;
+
+  const del = document.createElement("button");
+  del.className = "task-del";
+  del.title = "Remove from shelf";
+  del.innerHTML = ICONS.trash;
+  del.addEventListener("click", (e) => {
+    e.stopPropagation();
+    shelfRemove(it.path);
+  });
+
+  // Drag-out gesture: press + move beyond 8px starts a native OS drag
+  // carrying the file path. Pointer capture keeps the move stream alive
+  // even if hover/click-through flickers mid-gesture.
+  tile.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    tile.setPointerCapture(e.pointerId);
+    const startX = e.clientX;
+    const startY = e.clientY;
+    let started = false;
+    const onMove = (ev: PointerEvent): void => {
+      if (started) return;
+      if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > 8) {
+        started = true;
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        void beginShelfDrag(it);
+      }
+    };
+    const onUp = (): void => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  });
+
+  tile.addEventListener("dblclick", () => void api.revealPath(it.path));
+  tile.append(art, name, del);
+  return tile;
+}
+
+function shelfGlyph(name: string): string {
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+  if (["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp"].includes(ext)) return "🖼";
+  if (["zip", "rar", "7z", "tar", "gz"].includes(ext)) return "🗜";
+  if (["pdf"].includes(ext)) return "📕";
+  if (["doc", "docx", "txt", "md", "rtf"].includes(ext)) return "📝";
+  if (["mp4", "mkv", "mov", "avi"].includes(ext)) return "🎬";
+  if (["mp3", "wav", "flac", "aac"].includes(ext)) return "🎵";
+  return "📎";
+}
+
+/** Begins a native OS drag carrying the shelf item (blocks until drop). */
+async function beginShelfDrag(it: ShelfItem): Promise<void> {
+  setPin(true);
+  try {
+    const result = await api.startFileDrag([it.path]);
+    if (result === "dropped") shelfRemove(it.path);
+  } catch (err) {
+    // Real failures (never user-cancel) must be visible, not swallowed.
+    console.error("[shelf] drag-out failed:", err);
+  }
+  setPin(false);
+}
+
+function setupShelf(): void {
+  subscribeShelf(renderShelf);
+
+  // Drag-in: the OS reports drops on the window; add every path.
+  void getCurrentWebviewWindow().onDragDropEvent((event) => {
+    const type = event.payload.type;
+    if (type === "enter" || type === "over") {
+      dragOverShelf = true;
+      if ($("island").dataset.stage !== "expanded") void api.expandNow();
+      renderShelf();
+      $("island").dataset.drop = "1";
+    } else if (type === "leave") {
+      dragOverShelf = false;
+      $("island").dataset.drop = "";
+      renderShelf();
+    } else if (type === "drop") {
+      dragOverShelf = false;
+      $("island").dataset.drop = "";
+      for (const p of event.payload.paths) shelfAdd(p);
+      renderShelf();
+    }
+  });
 }
 
 /* ============================ boot ============================ */

@@ -489,12 +489,6 @@ button.chip.overdue:hover {
   pointer-events: none;
 }
 
-.shelf-art img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
 .shelf-name {
   font-size: 8.5px;
   color: var(--text-dim);

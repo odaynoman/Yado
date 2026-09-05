@@ -205,34 +205,6 @@ pub fn autostart_set(app: AppHandle, enable: bool) -> Result<(), String> {
 
 // ---------- shelf ----------
 
-#[derive(serde::Serialize, serde::Deserialize, Clone)]
-pub struct ShelfItem {
-    pub path: String,
-    pub name: String,
-    pub added_at: u64,
-}
-
-fn shelf_file(app: &AppHandle) -> Result<std::path::PathBuf, String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    Ok(dir.join("shelf.json"))
-}
-
-#[tauri::command]
-pub fn shelf_load(app: AppHandle) -> Result<Vec<ShelfItem>, String> {
-    let path = shelf_file(&app)?;
-    match std::fs::read_to_string(&path) {
-        Ok(text) => serde_json::from_str(&text).map_err(|e| e.to_string()),
-        Err(_) => Ok(Vec::new()),
-    }
-}
-
-#[tauri::command]
-pub fn shelf_save(app: AppHandle, items: Vec<ShelfItem>) -> Result<(), String> {
-    let path = shelf_file(&app)?;
-    let json = serde_json::to_string_pretty(&items).map_err(|e| e.to_string())?;
-    std::fs::write(&path, json).map_err(|e| e.to_string())
-}
-
 /// Reveals a path in the system file manager (selects it on Windows).
 #[tauri::command]
 pub fn reveal_path(path: String) -> Result<(), String> {
@@ -261,35 +233,134 @@ pub fn reveal_path(path: String) -> Result<(), String> {
     }
 }
 
-/// Starts a native OS drag of the given paths (blocks until drop/cancel).
-/// Runs on a dedicated thread: OLE needs a fresh STA COM apartment, and
-/// reusing pool threads silently fails when another task initialized COM
-/// differently. Returns the effect the target chose: "move" | "copy" | "link" | "none".
-#[tauri::command]
-pub async fn start_file_drag(paths: Vec<String>) -> Result<String, String> {
-    #[cfg(windows)]
-    {
-        if paths.is_empty() {
-            return Err("no files to drag".into());
-        }
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let result = crate::shelf_drag::do_file_drag(&paths).map(|effect| match effect {
-                crate::shelf_drag::DragEffect::Move => "move".into(),
-                crate::shelf_drag::DragEffect::Copy => "copy".into(),
-                crate::shelf_drag::DragEffect::Link => "link".into(),
-                crate::shelf_drag::DragEffect::None => "none".into(),
-            });
-            eprintln!("[shelf] drag-out finished: {result:?}");
-            let _ = tx.send(result);
-        });
-        rx.recv().map_err(|e| e.to_string())?
-    }
+/// Native drag-out runs on the main (UI) thread via `run_on_main_thread`.
+/// `DoDragDrop`'s modal loop reads the mouse-button state from the
+/// calling thread's input queue — a background thread never processes
+/// input, so its keystate permanently reads "button up" and the drag
+/// completes the instant it starts. The main thread is both the input
+/// thread and the permanently OLE-initialized thread, which is exactly
+/// what Win32 drag sources require.
+///
+/// Runs one native drag to completion. Errors are real failures (never
+/// "user cancelled") and are propagated verbatim.
+#[cfg_attr(not(windows), allow(unused_variables))]
+fn run_drag(
+    hwnd_raw: isize,
+    items: Vec<std::path::PathBuf>,
+    preview: std::path::PathBuf,
+) -> Result<String, String> {
     #[cfg(not(windows))]
     {
-        let _ = paths;
-        Err("drag-out is only supported on Windows".into())
+        return Err("unsupported platform".into());
     }
+    #[cfg(windows)]
+    {
+        use std::num::NonZero;
+        let raw = NonZero::new(hwnd_raw).ok_or("null window handle")?;
+        let handle = NotchWindowHandle(raw_window_handle::Win32WindowHandle::new(raw));
+        let outcome = std::sync::Arc::new(std::sync::Mutex::new(None::<drag::DragResult>));
+        let sink = outcome.clone();
+        drag::start_drag(
+            &handle,
+            drag::DragItem::Files(items),
+            drag::Image::File(preview),
+            move |result, _cursor| {
+                *sink.lock().unwrap() = Some(result);
+            },
+            drag::Options::default(),
+        )
+        .map_err(|e| format!("drag failed: {e}"))?;
+        let dropped = matches!(*outcome.lock().unwrap(), Some(drag::DragResult::Dropped));
+        Ok(if dropped { "dropped" } else { "cancelled" }.into())
+    }
+}
+
+/// Starts a native OS drag of the given paths (blocks until the user
+/// drops or cancels) and reports the outcome, so the frontend can take
+/// a delivered file off the temporary shelf.
+#[tauri::command]
+pub async fn start_file_drag(app: AppHandle, paths: Vec<String>) -> Result<String, String> {
+    if paths.is_empty() {
+        return Err("no files to drag".into());
+    }
+    #[cfg(windows)]
+    let hwnd_raw = {
+        let Some(win) = app.get_webview_window("main") else {
+            return Err("window not found".into());
+        };
+        let Ok(hwnd) = win.hwnd() else {
+            return Err("no window handle".into());
+        };
+        hwnd.0 as isize
+    };
+    let items: Vec<std::path::PathBuf> = paths.iter().map(std::path::PathBuf::from).collect();
+    let preview = drag_preview_png();
+    #[cfg(not(windows))]
+    {
+        let _ = (&app, items, preview);
+        return Err("unsupported platform".into());
+    }
+    #[cfg(windows)]
+    {
+        eprintln!("[shelf] drag-out requested: {} file(s)", items.len());
+        let (reply, mut rx) = tauri::async_runtime::channel(1);
+        app.run_on_main_thread(move || {
+            let result = run_drag(hwnd_raw, items, preview);
+            match &result {
+                Ok(outcome) => eprintln!("[shelf] drag finished: {outcome}"),
+                Err(err) => eprintln!("[shelf] drag failed: {err}"),
+            }
+            let _ = reply.try_send(result);
+        })
+        .map_err(|e| format!("could not reach the UI thread: {e}"))?;
+        match rx.recv().await {
+            Some(result) => result,
+            None => Err("drag produced no result".into()),
+        }
+    }
+}
+
+/// Minimal window-handle wrapper: the drag crate only needs the raw
+/// HWND, which Tauri exposes via `hwnd()`.
+#[cfg(windows)]
+#[derive(Clone, Copy)]
+struct NotchWindowHandle(raw_window_handle::Win32WindowHandle);
+
+#[cfg(windows)]
+unsafe impl Send for NotchWindowHandle {}
+
+#[cfg(windows)]
+unsafe impl Sync for NotchWindowHandle {}
+
+#[cfg(windows)]
+impl raw_window_handle::HasWindowHandle for NotchWindowHandle {
+    fn window_handle(
+        &self,
+    ) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
+        Ok(unsafe { raw_window_handle::WindowHandle::borrow_raw(self.0.clone().into()) })
+    }
+}
+
+/// 64px drag-preview tile (solid card + accent border), cached in temp.
+fn drag_preview_png() -> std::path::PathBuf {
+    let mut out = std::env::temp_dir();
+    out.push("yado-notch-drag-preview.png");
+    if !out.exists() {
+        let mut img = image::RgbaImage::from_pixel(64, 64, image::Rgba([27, 30, 36, 255]));
+        let accent = image::Rgba([59, 123, 255, 255]);
+        for x in 0..64 {
+            for y in [0, 1, 62, 63] {
+                img.put_pixel(x, y, accent);
+            }
+        }
+        for y in 0..64 {
+            for x in [0, 1, 62, 63] {
+                img.put_pixel(x, y, accent);
+            }
+        }
+        let _ = img.save(&out);
+    }
+    out
 }
 
 // ---------- app icons ----------

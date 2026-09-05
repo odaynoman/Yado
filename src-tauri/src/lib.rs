@@ -112,8 +112,6 @@ pub fn run() {
             commands::notify_focus_done,
             commands::autostart_enabled,
             commands::autostart_set,
-            commands::shelf_load,
-            commands::shelf_save,
             commands::reveal_path,
             commands::start_file_drag,
             media::media_play,

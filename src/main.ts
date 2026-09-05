@@ -15,7 +15,6 @@ import {
 } from "./tasksStore";
 import {
   getShelf,
-  loadShelf,
   shelfAdd,
   shelfRemove,
   subscribeShelf,
@@ -808,9 +807,11 @@ function shelfTile(it: ShelfItem): HTMLElement {
   });
 
   // Drag-out gesture: press + move beyond 8px starts a native OS drag
-  // carrying the file path.
+  // carrying the file path. Pointer capture keeps the move stream alive
+  // even if hover/click-through flickers mid-gesture.
   tile.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
+    tile.setPointerCapture(e.pointerId);
     const startX = e.clientX;
     const startY = e.clientY;
     let started = false;
@@ -851,9 +852,11 @@ function shelfGlyph(name: string): string {
 async function beginShelfDrag(it: ShelfItem): Promise<void> {
   setPin(true);
   try {
-    await api.startFileDrag([it.path]);
-  } catch {
-    // drag cancelled or unsupported
+    const result = await api.startFileDrag([it.path]);
+    if (result === "dropped") shelfRemove(it.path);
+  } catch (err) {
+    // Real failures (never user-cancel) must be visible, not swallowed.
+    console.error("[shelf] drag-out failed:", err);
   }
   setPin(false);
 }
@@ -880,8 +883,6 @@ function setupShelf(): void {
       renderShelf();
     }
   });
-
-  void loadShelf();
 }
 
 /* ============================ boot ============================ */

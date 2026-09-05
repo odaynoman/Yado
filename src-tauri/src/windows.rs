@@ -74,10 +74,14 @@ pub mod z_order {
         }
     }
 
-    /// Whether any OTHER window sits above `our` at a screen point.
-    /// Walks the z-order top-down and stops at our own window — our
-    /// click-through state is irrelevant because we skip by identity,
-    /// not by transparency.
+    /// Whether a *fullscreen app* covers the notch point right now.
+    ///
+    /// Two authoritative signals, OR-ed: the app the user is working in
+    /// (foreground window), or any fullscreen window above us in the
+    /// z-order (a maximized app behind a small floating window). A
+    /// candidate counts only if it is a real, painted, fullscreen app —
+    /// invisible fullscreen overlays, palettes, cloaked shell windows
+    /// and the wallpaper itself never count.
     pub fn point_covered_by_other(x: i32, y: i32, our: isize) -> bool {
         #[repr(C)]
         struct Rect {
@@ -89,42 +93,102 @@ pub mod z_order {
 
         const GWL_EXSTYLE: i32 = -20;
         const WS_EX_TRANSPARENT: i32 = 0x20;
+        const WS_EX_TOOLWINDOW: isize = 0x80;
         const GW_HWNDNEXT: u32 = 2;
+        const SM_CXSCREEN: i32 = 0;
+        const SM_CYSCREEN: i32 = 1;
+        const DWMWA_CLOAKED: u32 = 14;
 
         #[link(name = "user32")]
         extern "system" {
+            fn GetForegroundWindow() -> isize;
             fn GetTopWindow(h: isize) -> isize;
             fn GetWindow(h: isize, cmd: u32) -> isize;
             fn IsWindowVisible(h: isize) -> i32;
             fn IsIconic(h: isize) -> i32;
             fn GetWindowLongW(h: isize, index: i32) -> i32;
             fn GetWindowRect(h: isize, rect: *mut Rect) -> i32;
+            fn GetSystemMetrics(index: i32) -> i32;
+            fn GetClassNameW(h: isize, buf: *mut u16, max: i32) -> i32;
+        }
+
+        #[link(name = "dwmapi")]
+        extern "system" {
+            fn DwmGetWindowAttribute(h: isize, attr: u32, val: *mut u32, size: u32) -> i32;
+        }
+
+        // The desktop itself is never "an app covering the notch".
+        unsafe fn is_shell_wallpaper(h: isize) -> bool {
+            let mut buf = [0u16; 16];
+            let n = GetClassNameW(h, buf.as_mut_ptr(), buf.len() as i32);
+            if n <= 0 {
+                return false;
+            }
+            let name = String::from_utf16_lossy(&buf[..n as usize]);
+            name == "Progman" || name == "WorkerW"
+        }
+
+        // Cloaked windows paint nothing (compositor ground truth):
+        // Widgets board when closed, suspended UWP frames, etc.
+        unsafe fn is_cloaked(h: isize) -> bool {
+            let mut v: u32 = 0;
+            let ok = DwmGetWindowAttribute(h, DWMWA_CLOAKED, &mut v, 4);
+            ok == 0 && v != 0
+        }
+
+        // A real, interactable app window — not an overlay, palette,
+        // ghost or the wallpaper.
+        unsafe fn is_app_window(h: isize) -> bool {
+            IsWindowVisible(h) != 0
+                && IsIconic(h) == 0
+                && (GetWindowLongW(h, GWL_EXSTYLE) & WS_EX_TRANSPARENT) == 0
+                && (GetWindowLongW(h, GWL_EXSTYLE) & WS_EX_TOOLWINDOW as i32) == 0
+                && !is_shell_wallpaper(h)
+                && !is_cloaked(h)
+        }
+
+        unsafe fn window_rect(h: isize) -> Option<Rect> {
+            let mut r = Rect {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            };
+            (GetWindowRect(h, &mut r) != 0).then_some(r)
         }
 
         unsafe {
+            // The notch lives top-center of the primary monitor, so a
+            // covering *fullscreen* app is one whose rect contains the
+            // whole screen. (Maximized windows overshoot by the border
+            // size, which containment absorbs naturally.)
+            let sw = GetSystemMetrics(SM_CXSCREEN);
+            let sh = GetSystemMetrics(SM_CYSCREEN);
+            let covers = |h: isize| {
+                is_app_window(h)
+                    && window_rect(h).is_some_and(|r| {
+                        x >= r.left
+                            && x < r.right
+                            && y >= r.top
+                            && y < r.bottom
+                            && r.left <= 0
+                            && r.top <= 0
+                            && r.right >= sw
+                            && r.bottom >= sh
+                    })
+            };
+
+            let fg = GetForegroundWindow();
+            if fg != 0 && fg != our && covers(fg) {
+                return true;
+            }
             let mut cur = GetTopWindow(0);
             while cur != 0 {
                 if cur == our {
                     return false;
                 }
-                if IsWindowVisible(cur) != 0
-                    && IsIconic(cur) == 0
-                    && (GetWindowLongW(cur, GWL_EXSTYLE) & WS_EX_TRANSPARENT) == 0
-                {
-                    let mut r = Rect {
-                        left: 0,
-                        top: 0,
-                        right: 0,
-                        bottom: 0,
-                    };
-                    if GetWindowRect(cur, &mut r) != 0
-                        && x >= r.left
-                        && x < r.right
-                        && y >= r.top
-                        && y < r.bottom
-                    {
-                        return true;
-                    }
+                if covers(cur) {
+                    return true;
                 }
                 cur = GetWindow(cur, GW_HWNDNEXT);
             }

@@ -19,6 +19,11 @@ use crate::windows::{self, PILL_SIZE};
 
 /// Hover dwell before the pill expands.
 const OPEN_DWELL: Duration = Duration::from_millis(180);
+/// Dwell before the top strip expands while a fullscreen app covers the
+/// notch. Deliberately longer: a cursor crossing those pixels is usually
+/// aiming at the app's own top UI (tab bars live there), while opening
+/// the notch means parking.
+const COVERED_DWELL: Duration = Duration::from_millis(600);
 /// Grace period after the cursor leaves before the panel collapses.
 const CLOSE_GRACE: Duration = Duration::from_millis(400);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
@@ -238,7 +243,7 @@ fn spawn_windows(app: AppHandle, shared: SharedHandle) {
                 h: pill.h + hover_margin,
             };
             let over_hover_zone = contains(&hover_zone, cx, cy);
-            let pill_covered =
+            let covered =
                 over_pill && windows::z_order::point_covered_by_other(cx, cy, our_hwnd);
             let band_w = (150.0_f64 * scale).round() as i32;
             let band_h = (10.0_f64 * scale).round() as i32;
@@ -292,10 +297,11 @@ fn spawn_windows(app: AppHandle, shared: SharedHandle) {
                     // Dual zones: exposed pill = full area; covered pill =
                     // small top-center strip only, so we never hijack the
                     // app's own top area.
-                    let trigger = if pill_covered { in_band } else { over_hover_zone };
+                    let trigger = if covered { in_band } else { over_hover_zone };
+                    let dwell = if covered { COVERED_DWELL } else { OPEN_DWELL };
                     if trigger && !block {
                         let since = *dwell_since.get_or_insert(Instant::now());
-                        if since.elapsed() >= OPEN_DWELL {
+                        if since.elapsed() >= dwell {
                             next = Stage::Expanded;
                         }
                     } else {
@@ -328,10 +334,13 @@ fn spawn_windows(app: AppHandle, shared: SharedHandle) {
             }
 
             // Click-through: only the visible island receives the pointer.
+            // A covered pill stays click-through so clicks reach the
+            // fullscreen app beneath (its tab bar lives under these very
+            // pixels); the strip still expands by hover position.
             let want_ignore = if next == Stage::Expanded {
                 !over_island
             } else {
-                !over_pill
+                covered || !over_pill
             };
             if want_ignore != ignore
                 && win.set_ignore_cursor_events(want_ignore).is_ok()
